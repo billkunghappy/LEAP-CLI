@@ -421,6 +421,10 @@ def _check_local(
           cwd=project,
           capture_output=True,
           text=True,
+          # Lean prints UTF-8; the locale default (cp1252 on Windows) would
+          # mangle or fail on symbols such as ℝ.
+          encoding="utf-8",
+          errors="replace",
           timeout=timeout,
           check=False,
       )
