@@ -15,7 +15,8 @@
 # Examples:
 #   LEAP_AGENT_CLI=claude LEAP_TARGET_DIR=runs/p1 ./safe_lemma_runner.sh \
 #       --agent orchestrator-lemma -p "Prove problems/p1.lean; problem root: runs/p1"
-#   LEAP_AGENT_CLI=codex LEAP_RESUME_FLAG= LEAP_TARGET_DIR=runs/p1 \
+#   LEAP_AGENT_CLI=codex LEAP_RESUME_FLAG= LEAP_RESUME_PREFIX='$leap-prove ' \
+#       LEAP_TARGET_DIR=runs/p1 \
 #       ./safe_lemma_runner.sh exec "\$leap-prove Prove problems/p1.lean; problem root: runs/p1"
 # ==============================================================================
 set -u
