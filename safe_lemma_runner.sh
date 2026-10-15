@@ -1,13 +1,25 @@
 #!/bin/bash
 # ==============================================================================
 # safe_lemma_runner.sh: Zero-Zombie, Signal-Safe Autonomous Rollout Runner
-# Specifically designed for custom/BYOM model endpoints (e.g. beyond-api://)
-# that may undergo periodic TPU pod reboots (5-15 minute outages).
+# Re-launches a headless agent CLI until the orchestrator log records a verified
+# [PHASE 5: COMPLETE], surviving crashes, rate limits and endpoint outages.
 #
-# The agent CLI it drives has no default: set LEAP_AGENT_CLI to the binary that
-# accepts the arguments you pass through to this script.
+#   LEAP_AGENT_CLI   the binary to drive (required): claude, codex, ...
+#   LEAP_TARGET_DIR  the problem root to watch for completion
+#   LEAP_RESUME_FLAG how the resume prompt is passed on restarts. Default "-p"
+#                    (Claude Code: `claude -p ...`). Set it to "" to pass the
+#                    prompt as the last positional argument (`codex exec ...`).
+#   LEAP_RESUME_PREFIX text prepended to the resume prompt, e.g. '$leap-prove '
+#                    so Codex re-loads the orchestrator skill on restart.
+#
+# Examples:
+#   LEAP_AGENT_CLI=claude LEAP_TARGET_DIR=runs/p1 ./safe_lemma_runner.sh \
+#       --agent orchestrator-lemma -p "Prove problems/p1.lean; problem root: runs/p1"
+#   LEAP_AGENT_CLI=codex LEAP_RESUME_FLAG= LEAP_TARGET_DIR=runs/p1 \
+#       ./safe_lemma_runner.sh exec "\$leap-prove Prove problems/p1.lean; problem root: runs/p1"
 # ==============================================================================
 set -u
+HERE="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
 
 export PATH="${HOME}/.local/bin:${PATH:-/usr/local/bin:/usr/bin:/bin}"
 AGENT_CLI="${LEAP_AGENT_CLI:-}"
@@ -38,7 +50,7 @@ FIRST_RUN=true
 TARGET_DIR="${LEAP_TARGET_DIR:-}"
 if [[ -z "${TARGET_DIR}" ]]; then
   for arg in "$@"; do
-    if [[ "${arg}" =~ (/[^[:space:]]*rollout_[0-9]+) ]]; then
+    if [[ "${arg}" =~ problem\ root:\ ([^[:space:]\"]+) ]]; then
       TARGET_DIR="${BASH_REMATCH[1]}"
     fi
   done
@@ -50,18 +62,10 @@ while true; do
     CLI_ARGS=("$@")
   else
     if [[ -n "${TARGET_DIR}" ]]; then
-      echo "[$(date)] Releasing stranded processing subgoals in ${TARGET_DIR} via release_all..."
-      python3 -c "
-import json, os
-pg_file = os.path.join('${TARGET_DIR}', 'proof_graph.json')
-if os.path.exists(pg_file):
-    with open(pg_file) as f: pg = json.load(f)
-    for n in pg.get('nodes', {}).values():
-        if 'search_metadata' in n:
-            n['search_metadata']['processing'] = False
-            n['search_metadata'].pop('claimed_by', None)
-    with open(pg_file, 'w') as f: json.dump(pg, f, indent=2)
-" 2>/dev/null || true
+      echo "[$(date)] Releasing stranded claims in ${TARGET_DIR} via release_all..."
+      state_manager_bin --root_dir="${TARGET_DIR}" --action=release_all \
+        || "${LEAP_PYTHON:-python3}" "${HERE}/state_manager.py" \
+             --root_dir="${TARGET_DIR}" --action=release_all || true
     fi
 
     # Strip existing -p / --prompt arguments to replace with continuation prompt
@@ -80,7 +84,15 @@ if os.path.exists(pg_file):
       CLI_ARGS+=("${arg}")
     done
 
-    CLI_ARGS+=(-p "Resume orchestration on the existing graph at ${TARGET_DIR}. All proved nodes and subgoals are preserved in proof_graph.json. Inspect open nodes, release any stranded claims, and continue solving to completion.")
+    RESUME_PROMPT="${LEAP_RESUME_PREFIX:-}Resume orchestration on the existing graph at ${TARGET_DIR}. All proved nodes and subgoals are preserved in proof_graph.json. Inspect open nodes, release any stranded claims, and continue solving to completion."
+    if [[ -n "${LEAP_RESUME_FLAG-"-p"}" ]]; then
+      CLI_ARGS+=("${LEAP_RESUME_FLAG-"-p"}" "${RESUME_PROMPT}")
+    elif [[ ${#CLI_ARGS[@]} -gt 0 ]]; then
+      # Positional prompt: replace the original last argument.
+      CLI_ARGS=("${CLI_ARGS[@]:0:${#CLI_ARGS[@]}-1}" "${RESUME_PROMPT}")
+    else
+      CLI_ARGS=("${RESUME_PROMPT}")
+    fi
   fi
 
   "${AGENT_CLI}" \

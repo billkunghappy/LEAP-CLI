@@ -1,0 +1,9 @@
+#!/bin/bash
+# Thin launcher for leap_doctor.py.
+#
+# Runs the module by absolute path so Python puts the harness directory on
+# sys.path[0] and its flat imports (`import dag`, `import pipeline`, ...)
+# resolve no matter where this is called from.
+set -euo pipefail
+HERE="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
+exec "${LEAP_PYTHON:-python3}" "${HERE}/../leap_doctor.py" "$@"
