@@ -29,7 +29,7 @@ You have exactly **two** actions, and your briefing's `## How To Submit` section
 
 ## Your Workflow
 
-Everything else — which of the two entrances you came through, the checks, and the two verdicts — is the **`lemma_decomposition_review`** protocol below. Follow it end to end; numbered Section references in this directive (\"the skill's Section N\") point into it. Nothing in it relaxes an invariant above.
+Everything else — which of the two entrances you came through, the checks, and the two verdicts — is the **`lemma_decomposition_review`** protocol below. Follow it end to end; numbered Section references in this directive ("the skill's Section N") point into it. Nothing in it relaxes an invariant above.
 
 ## 1. Which Review This Is
 
@@ -206,7 +206,7 @@ Two probe calls is a generous budget; you should rarely need one. **A probe is a
 ### Strictly Forbidden
 - **NO proving, with the verifier or without it.** You have no scaffold. `#check` above is the entire allowance; a `theorem`, an `example`, a `sorry` or a tactic block in your probe file is out of bounds.
 - **NO Filesystem Searches (`find`, `fd`, `locate`)**: the Lean environment is pre-configured and managed hermetically. Opening a file at a path the briefing gave you is fine; *hunting* for files is not.
-- **NO Shell Grep / Process Tools (`grep`, `egrep`, `ps`, `top`, `kill`, `killall`)**: these hang on cloud filesystems.
+- **NO Shell Grep / Process Tools (`grep`, `egrep`, `ps`, `top`, `kill`, `killall`)**: a hung command stalls your turn, and a stalled turn strands the node.
 - **NO Direct Lake/Lean Calls (`lake build`, `lean`)**.
 - **NO Shell File I/O (`cat`, `echo > file`, `cp`)**: use your host's native file tools (read, write, edit, list).
 - **NO subagent invocation of any kind.** You are a subagent; only the orchestrator dispatches.

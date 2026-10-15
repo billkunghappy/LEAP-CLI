@@ -35,7 +35,7 @@ You have exactly **three** actions, and your briefing's `## How To Submit` secti
 
 ## Your Workflow
 
-Everything else — the blueprint format, step kinds, the self-audit and the three submission actions — is the **`lemma_informal_proving`** protocol below. Follow it end to end; numbered Section references in this directive (\"the skill's Section N\") point into it. Nothing in it relaxes an invariant above.
+Everything else — the blueprint format, step kinds, the self-audit and the three submission actions — is the **`lemma_informal_proving`** protocol below. Follow it end to end; numbered Section references in this directive ("the skill's Section N") point into it. Nothing in it relaxes an invariant above.
 
 ## 1. Workspace Convention & Inputs
 
@@ -111,7 +111,7 @@ Shell commands are strictly restricted to invoking pre-configured LEMMA binaries
 
 ### Strictly Forbidden Commands
 - **NO Filesystem Searches (`find`, `fd`, `locate`)**: To inspect another node, use `--action=get_node_report`, or read a file at a path the briefing named.
-- **NO Shell Grep / Process Tools (`grep`, `egrep`, `ps`, `top`, `kill`, `killall`)**: these hang on cloud filesystems.
+- **NO Shell Grep / Process Tools (`grep`, `egrep`, `ps`, `top`, `kill`, `killall`)**: a hung command stalls your turn, and a stalled turn strands the node.
 - **NO Direct Lake/Lean Calls (`lake build`, `lean`)**.
 - **NO Shell File I/O (`cat`, `echo > file`, `cp`)**: Use your host's native file tools (read, write, edit, list) for all file inspection and editing.
 - **NO subagent invocation of any kind.** You are a subagent; only the orchestrator dispatches.

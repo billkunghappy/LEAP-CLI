@@ -158,33 +158,20 @@ subtree is re-planned indefinitely, by design.
 
 ## 2. Agent Team Specifications
 
-Agents are **compiled, not hand-written**. `tools/lemma/compile_agents.py`
-merges two sources into each `agents/<name>.md`:
+Each agent is one Markdown file in `agents/`: frontmatter plus the agent's
+full operating protocol (directive, invariants and workflow, in one body).
+The frontmatter is host-neutral -- `tools` lists *capabilities* (`shell`,
+`read`, `write`, `edit`, `list`, `web`, `subagents`, `tasks`), not one CLI's
+tool names -- and `install.py --host <claude|codex|antigravity>` renders it
+into the layout and tool names that host reads, appending a short "Host
+notes" section on dispatch and shell timeouts. See the README for the layouts.
 
-| Source                            | Supplies                               |
-| :-------------------------------- | :------------------------------------- |
-| `archetypes/<agent>/default.yaml` | Identity, roles, `tool_groups`,        |
-:                                   : `skills`, and the Turn-0 `directive`   :
-| `skills/<skill>/SKILL.md`         | The full operating protocol, **inlined |
-:                                   : verbatim** into the agent body         :
-
-The inlining is driven by `SKILL_MAPPING` in `compile_agents.py`, which pairs
-four agents with the skill that defines how they work:
-`lemma_proof_worker`→`lemma_formal_proving`,
-`lemma_informal_prover`→`lemma_informal_proving`,
-`lemma_decomposition_reviewer`→`lemma_decomposition_review`,
-`lemma_proof_verifier`→`lemma_formal_verification`. Because the protocol is
-copied into the agent rather than referenced, the two cannot drift apart — but
-it also means **editing a skill has no effect until the agents are recompiled**,
-which `prepare_workspace.sh` does.
-
-`tool_groups` names capabilities, not a specific harness's tool names;
-`TOOL_GROUP_MAPPING` expands them onto whatever the host calls them. The Strict
-Command Policy in each directive — which binaries `run_command` may invoke — is
-the constraint that actually matters.
+The Strict Command Policy in each directive -- which binaries the shell may
+invoke -- is the constraint that actually matters; the host tool allow-list is
+a second line of defence.
 
 The blocks below summarise each agent's contract. They are a reading aid, not
-the file format; the source of truth is the YAML plus the skill.
+the file format; the source of truth is `agents/<name>.md`.
 
 ### 2.1. `orchestrator_lemma`
 
@@ -204,7 +191,7 @@ the file format; the source of truth is the YAML plus the skill.
   "write_actions": ["init_graph", "release"],
   "read_actions": ["claim_next", "inspect", "get_node_report", "get_context", "get_accessible_nodes", "describe_workspace", "assemble", "plot_graph", "sync"],
   "skills": [],
-  "tools": ["invoke_subagent", "manage_subagents", "run_command", "view_file", "write_to_file"],
+  "tools": ["shell", "read", "write", "edit", "list", "subagents"],
   "binaries": ["state_manager_bin"]
 }
 ```
@@ -230,10 +217,9 @@ the file format; the source of truth is the YAML plus the skill.
     "The turn ends on success: true and nothing else. Stopping while still holding the node strands it for the rest of the run.",
     "Workspace isolation: writes only inside its own node directory. Never ../, never /tmp/.",
     "No claiming, no dispatching.",
-    "Strict Command Policy: run_command only for lean_search_tool_bin (timeout 600s) and state_manager_bin (timeout 900s). No raw find, grep, ps, lake, or exploratory bash."
+    "Strict Command Policy: shell only for lean_search_tool_bin and state_manager_bin. No raw find, grep, ps, lake, or exploratory bash."
   ],
-  "skills": ["skills/lemma_informal_proving"],
-  "tools": ["run_command", "view_file", "write_to_file", "replace_file_content", "web_search", "web_fetch"],
+  "tools": ["shell", "read", "write", "edit", "list", "web"],
   "binaries": ["state_manager_bin", "lean_search_tool_bin"]
 }
 ```
@@ -257,10 +243,9 @@ the file format; the source of truth is the YAML plus the skill.
     "Workspace isolation: writes only inside its own node directory, never /tmp/. scratch/blueprint.md belongs to the informal prover — read it, never overwrite it.",
     "No claiming, no dispatching. Subgoals become nodes because they were submitted; the orchestrator dispatches them.",
     "Rethink protocol: after 2 failed compiles, stop guessing tactics and re-audit the mathematics.",
-    "Strict Command Policy: run_command only for lean_verifier_tool_bin and lean_search_tool_bin (timeout 600s) and state_manager_bin (timeout 900s). No raw find, grep, ps, lake, or exploratory bash."
+    "Strict Command Policy: shell only for lean_verifier_tool_bin and lean_search_tool_bin and state_manager_bin. No raw find, grep, ps, lake, or exploratory bash."
   ],
-  "skills": ["skills/lemma_formal_proving"],
-  "tools": ["run_command", "view_file", "write_to_file", "replace_file_content", "web_search", "web_fetch"],
+  "tools": ["shell", "read", "write", "edit", "list", "web"],
   "binaries": ["state_manager_bin", "lean_search_tool_bin", "lean_verifier_tool_bin"]
 }
 ```
@@ -287,10 +272,9 @@ the file format; the source of truth is the YAML plus the skill.
     "The verdict is the submission. No file is read; --reason carries the whole message, and fewer than four words is refused.",
     "Cannot kill a node, only a plan. A defective goal is still `replan` — nothing can end a node.",
     "The turn ends on success: true and nothing else.",
-    "Strict Command Policy: run_command only for state_manager_bin (timeout 900s) and lean_search_tool_bin (timeout 600s). Never lean_verifier_tool_bin — there is no scaffold and nothing to compile. No raw find, grep, ps, lake, or exploratory bash."
+    "Strict Command Policy: shell only for state_manager_bin and lean_search_tool_bin. Never lean_verifier_tool_bin — there is no scaffold and nothing to compile. No raw find, grep, ps, lake, or exploratory bash."
   ],
-  "skills": ["skills/lemma_decomposition_review"],
-  "tools": ["run_command", "view_file", "write_to_file"],
+  "tools": ["shell", "read", "write", "edit", "list"],
   "binaries": ["state_manager_bin", "lean_search_tool_bin"]
 }
 ```
@@ -303,14 +287,13 @@ the file format; the source of truth is the YAML plus the skill.
   "role": "Independent Final Proof Auditor (dispatched once, post-assembly)",
   "directive": "Audits assembled/final_proof.lean at the conclusion of the run: standalone compilation, zero sorry, zero sorryAx, and only the standard Lean 4 foundation axioms (propext, Classical.choice, Quot.sound).",
   "invariants": [
-    "Verification runs only as: timeout 600s lean_verifier_tool_bin --code_file=<assembled_path> --target_name=<root_id> --timeout=480 --json_output.",
+    "Verification runs only as: lean_verifier_tool_bin --code_file=<assembled_path> --target_name=<root_id> --timeout=480 --json_output.",
     "final_proof.lean is strictly immutable. Minor fixes go to assembled/final_proof_fix1.lean, then _fix2.lean. Inserting sorry or deleting theorems is forbidden.",
     "Budget: at most 5 verification calls total, and at most 2 retries on a timeout (exit 124).",
     "No dispatching, no state: never invokes a subagent, never runs state_manager_bin. It holds no claim on any node.",
     "Verdict: APPROVE (citing the verified path, 0 sorry, valid axioms) or REQUEST_CHANGES, reported to the orchestrator."
   ],
-  "skills": ["skills/lemma_formal_verification"],
-  "tools": ["run_command", "view_file", "write_to_file"],
+  "tools": ["shell", "read", "write", "edit", "list"],
   "binaries": ["lean_verifier_tool_bin"]
 }
 ```
@@ -352,7 +335,7 @@ filesystem_contract:
     owner: tool
     holds: "Certified truth and search metadata only -- no prose, no plans, no findings."
     locking: "Path-mapped threading.RLock + POSIX fcntl.flock(LOCK_EX / LOCK_SH)"
-    backups: "<cns_run_dir>/ (atomic copy & move, via --action=sync)"
+    backups: "<backup_dir>/ (atomic copy & rename; --backup_dir, or --action=sync)"
 
   node_workspace:
     path: "<problem_root_dir>/nodes/<node_id>/"
@@ -408,7 +391,6 @@ filesystem_contract:
 
 Every briefing also ends with a `## How To Submit` section giving each of the phase's allowed actions as a complete, copy-pasteable `state_manager_bin` command with the paths already filled in. That list is `pipeline.allowed_actions(phase)` — the same tuple `claim_next` returns to the orchestrator as `metadata.allowed_actions` — so the agent, the dispatch prompt and the recorder cannot disagree about the vocabulary.
 
-Rendered examples for all four dispatchable phases are checked in under [docs/examples/briefings/](examples/briefings/).
 
 ### 3.2. State Manager API Interaction Matrix
 
@@ -523,8 +505,8 @@ All five declared actions share one handler (`_handle_declare` → `actions.decl
 | `plot_graph`           | Orchestrator / admin | —                 | Writes DOT and SVG renderings |
 :                        :                      :                   : of the current graph, styled  :
 :                        :                      :                   : by `plot_style`.              :
-| `sync`                 | Orchestrator / admin | `[--cns_run_dir]` | Copies the state file and     |
-:                        :                      :                   : node artifacts to CNS         :
+| `sync`                 | Orchestrator / admin | `[--backup_dir]`  | Copies the state file and     |
+:                        :                      :                   : node artifacts to the backup  :
 :                        :                      :                   : storage.                      :
 
 ---
@@ -579,7 +561,7 @@ graph TD
     SM_Assemble --> WM_WriteProof[WorkspaceManager.write_final_assembled_proof]
 
     Lock -->|Auto SVG Plot| Plot[generate_plot / plot_style]
-    Lock -->|Auto Backup| CNS[sync_to_cns]
+    Lock -->|Auto Backup| BK[sync_backup]
 ```
 
 Two properties of the submission path are worth naming. **The kernel compile runs unlocked**: `_verify_before_commit` takes a snapshot of the graph, holds no lock while Lean runs, and the commit re-acquires the lock and rejects the write if the node's `revision` moved underneath it. And **every write bumps `revision`** — declarations too, not just submissions — because the orchestrator can `release` a node whose worker is still compiling, and that bump is what makes the stale result lose.
@@ -599,7 +581,7 @@ def lock_and_modify(filepath, initial_graph=None):
       recalculate_empirical_metrics(graph)
       atomic_write_and_fsync(f, graph)
       generate_svg_plot(graph)
-      sync_to_cns_if_configured(graph)
+      sync_backup_if_configured(graph)
 
 def read_graph(filepath):
   """Acquires in-memory RLock + POSIX fcntl.flock(LOCK_SH) and deserializes ProofGraph."""
@@ -830,84 +812,51 @@ hand-driven entry points for the same machinery.
 
 #### `lean_verifier_tool_bin`
 
-Submits Lean 4 to a **hosted** verifier and reports whether the kernel accepted
-it, plus which axioms the target depends on. There is no local Lean toolchain
-and none is required.
+Compiles Lean 4 and reports whether the kernel accepted it, plus which axioms
+the target depends on. Entry point: `lean_verifier_tool.py`. Two backends:
 
-Entry point: `lean_verifier_tool.py`.
+| Backend  | Selected by                                   | What it does |
+| :------- | :-------------------------------------------- | :----------- |
+| `kimina` | `LEAN_VERIFIER_URL` (or `LEAN_VERIFIER_BACKEND=kimina`) | `POST {url}/api/check` to a [kimina-lean-server](https://github.com/project-numina/kimina-lean-server); `LEAN_VERIFIER_API_KEY` is sent as `Authorization: Bearer`. |
+| `local`  | `LEAN_PROJECT_DIR` (or `LEAN_VERIFIER_BACKEND=local`) | `lake env lean --json <tmpfile>` inside a Lake project that depends on Mathlib. |
 
-| Flag             | Default                    | Notes                       |
-| :--------------- | :------------------------- | :-------------------------- |
-| `--code_file`    | —                          | Path to the `.lean` file to |
-:                  :                            : verify.                     :
-| `--code`         | —                          | The Lean source inline, as  |
-:                  :                            : an alternative to           :
-:                  :                            : `--code_file`.              :
-| `--target_name`  | —                          | Theorem to run `#print      |
-:                  :                            : axioms` against. Without it :
-:                  :                            : you get compilation only,   :
-:                  :                            : not an axiom audit.         :
-| `--timeout`      | `700`                      | Client-side budget in       |
-:                  :                            : seconds. The server budget  :
-:                  :                            : is deliberately shorter,    :
-:                  :                            : leaving slack for           :
-:                  :                            : serialization.              :
-| `--verifier_url` | `$LEAN_VERIFIER_URL`, else | Override the endpoint.      |
-:                  : the Cloud Run service      :                             :
-| `--json_output`  | `false`                    | Emit the structured result  |
-:                  :                            : below.                      :
+| Flag             | Default               | Notes |
+| :--------------- | :-------------------- | :---- |
+| `--code_file`    | --                    | Path to the `.lean` file to verify. |
+| `--code`         | --                    | The Lean source inline, as an alternative to `--code_file`. |
+| `--target_name`  | --                    | Theorem to run `#print axioms` against. Without it you get compilation only, not an axiom audit. |
+| `--timeout`      | `700`                 | Lean compile budget in seconds. |
+| `--verifier_url` | `$LEAN_VERIFIER_URL`  | Override the kimina endpoint. |
+| `--json_output`  | `false`               | Emit the structured result below. |
 
 `--json_output` returns `LeanVerifierOutput`:
 
-| Field              | Meaning                                                 |
-| :----------------- | :------------------------------------------------------ |
-| `is_valid`         | The kernel accepted the code.                           |
-| `error_message`    | Why it did not.                                         |
-| `used_axioms`      | Axioms `--target_name` depends on. **This is the field  |
-:                    : that matters for soundness** — `sorryAx` here means the :
-:                    : proof is a hole.                                        :
-| `info_messages`    | Compiler output that is not an error: `exact?`          |
-:                    : suggestions, `#check` results.                          :
-| `is_infra_failure` | **No verdict was obtained at all** — transport failure, |
-:                    : empty response, server-side timeout.                    :
+| Field              | Meaning |
+| :----------------- | :------ |
+| `is_valid`         | The kernel accepted the code. |
+| `error_message`    | Why it did not. |
+| `used_axioms`      | Axioms `--target_name` depends on. **This is the field that matters for soundness** -- `sorryAx` here means the proof is a hole. |
+| `info_messages`    | Compiler output that is not an error: `exact?` suggestions, `#check` results. |
+| `is_infra_failure` | **No verdict was obtained at all** -- transport failure, empty response, timeout, a broken local toolchain. |
 
 > [!IMPORTANT] `is_infra_failure` is not `is_valid=False`. The first means the
 > question was never answered; the second means Lean answered no. Treating a
-> read timeout as a proof regression is a mistake this field exists to prevent,
-> and one that has already produced a false regression report once.
+> read timeout as a proof regression is a mistake this field exists to prevent.
 
 #### `lean_search_tool_bin`
 
-Semantic and signature search over Mathlib, for finding the canonical name of a
-structure or a lemma before writing tactics.
+Mathlib search, for finding the canonical name of a structure or a lemma
+before writing tactics. Entry point: `lean_search_tool.py`.
 
-Entry point: `lean_search_tool.py`.
-
-| Flag                 | Default                                                 | Notes                   |
-| :------------------- | :------------------------------------------------------ | :---------------------- |
-| `--query`            | —                                                       | Required. Natural       |
-:                      :                                                         : language or a Lean      :
-:                      :                                                         : signature.              :
-| `--num_results`      | `5`                                                     |                         |
-| `--use_internal`     | `false`                                                 | Query a self-hosted     |
-:                      :                                                         : gRPC service. Not       :
-:                      :                                                         : implemented in this     :
-:                      :                                                         : release -- raises       :
-:                      :                                                         : NotImplementedError.    :
-| `--internal_address` | —                                                       | `host:port` of that     |
-:                      :                                                         : gRPC service.           :
-| `--endpoint`         | `https://leansearch.net/search`                         | Public fallback, used   |
-:                      :                                                         : when                    :
-:                      :                                                         : `--use_internal=false`. :
-| `--subagent_quota`   | `$LEAN_SEARCH_SUBAGENT_QUOTA`, else `-1`                | Searches allowed per    |
-:                      :                                                         : subagent session.       :
-:                      :                                                         : Negative is unlimited;  :
-:                      :                                                         : `0` forbids searching.  :
-| `--quota_dir`        | `/tmp/jetski_subagent_quota`                            | Where per-subagent      |
-:                      :                                                         : counts are tracked.     :
-| `--json_output`      | `false`                                                 |                         |
+| Flag               | Default                                   | Notes |
+| :----------------- | :---------------------------------------- | :---- |
+| `--query`          | --                                        | Required. Natural language or a Lean signature. |
+| `--num_results`    | `5`                                       | |
+| `--backend`        | `auto`                                    | `auto` = [leansearch.net](https://leansearch.net), falling back to [Loogle](https://loogle.lean-lang.org) on failure; or `leansearch` / `loogle`. |
+| `--endpoint`       | `$LEAN_SEARCH_ENDPOINT`, else `https://leansearch.net/search` | |
+| `--subagent_quota` | `$LEAN_SEARCH_SUBAGENT_QUOTA`, else `-1`  | Searches allowed per agent id (`$LEAP_AGENT_ID`, or Antigravity's `$ANTIGRAVITY_CONVERSATION_ID`). Negative is unlimited; `0` forbids searching. |
+| `--quota_dir`      | `$TMPDIR/leap_search_quota`               | Where per-agent counts are tracked. |
+| `--json_output`    | `false`                                   | |
 
 The quota exists because search is the cheapest thing an agent can do and
-therefore the easiest thing for it to do instead of proving. Setting it caps
-that per dispatch rather than per run, so a long-lived node is not starved by an
-early one.
+therefore the easiest thing for it to do instead of proving.

@@ -38,7 +38,7 @@ Either way you have exactly **two** actions, and your briefing's `## How To Subm
 
 ## Your Workflow
 
-Everything else — the scaffold anatomy, the proving methodology, the decompose gate and the submission — is the **`lemma_formal_proving`** protocol below. Follow it end to end; numbered Section references in this directive (\"the skill's Section N\") point into it. Nothing in it relaxes an invariant above.
+Everything else — the scaffold anatomy, the proving methodology, the decompose gate and the submission — is the **`lemma_formal_proving`** protocol below. Follow it end to end; numbered Section references in this directive ("the skill's Section N") point into it. Nothing in it relaxes an invariant above.
 
 ## 1. Workspace Convention & Scaffold Anatomy
 
@@ -115,7 +115,7 @@ Shell commands are strictly restricted to the pre-configured LEMMA binaries.
 
 ### Strictly Forbidden Commands
 - **NO Filesystem Searches (`find`, `fd`, `locate`)**: do not hunt for `lakefile.lean`, `.lake`, or project roots. The Lean environment is pre-configured and managed hermetically by `lean_verifier_tool_bin`.
-- **NO Shell Grep / Process Tools (`grep`, `egrep`, `ps`, `top`, `kill`, `killall`)**: these hang on cloud filesystems.
+- **NO Shell Grep / Process Tools (`grep`, `egrep`, `ps`, `top`, `kill`, `killall`)**: a hung command stalls your turn, and a stalled turn strands the node.
 - **NO Direct Lake/Lean Calls (`lake build`, `lean`)**: always use `lean_verifier_tool_bin`.
 - **NO Shell File I/O (`cat`, `echo > file`, `cp`)**: use your host's native file tools (read, write, edit, list) for all inspection and editing. Opening a file at a path the briefing gave you is fine; *hunting* for files is not.
 - **NO subagent invocation of any kind.** You are a subagent; only the orchestrator dispatches.
