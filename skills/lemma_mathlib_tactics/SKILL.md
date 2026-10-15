@@ -7,7 +7,6 @@ description: >-
   induction. For theorem/structure search and discovery, use lemma_mathlib_search.
 depends_on:
   - lemma_mathlib_search
-owners: [lfsong, ponienkung, violetpeng, szuo]
 ---
 
 # Lean 4 & Mathlib Tactics & Automation Methodology
@@ -37,5 +36,5 @@ When building formal proofs, select tactics based on the algebraic and logical g
 ## 2. Specialized Tactical Guide
 
 For comprehensive tactic tables, type-coercion patterns, and algebraic solving techniques, consult:
-* **Mathlib Tactics Guide**: [`references/mathlib_tactics_guide.md`](references/mathlib_tactics_guide.md) (read on demand via `view_file`).
+* **Mathlib Tactics Guide**: [`references/mathlib_tactics_guide.md`](references/mathlib_tactics_guide.md) (read on demand).
 

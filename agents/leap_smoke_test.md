@@ -1,26 +1,13 @@
 ---
 name: leap_smoke_test
-description: "HAND-MAINTAINED, NOT GENERATED: this agent has no archetype and compile_agents.py never touches it. Diagnostic probe that checks whether a model can drive the LEMMA pipeline at all -- binaries on PATH, tool calling, subagent dispatch, and agent definitions current. Not part of a proof run."
+description: "LEAP smoke test: checks that the LEAP binaries are on PATH and that subagent dispatch works. Not part of a proof run."
 mainAgent: true
 subagent: false
-inheritCustomizations: true
-tools:
-  - run_command
-  - invoke_subagent
-  - manage_subagents
-  - view_file
+tools: [shell, subagents, read]
 skills: []
 ---
 
 # Directive
-
-> **This file is hand-maintained.** Every other file in `agents/` is generated
-> from `archetypes/` by `tools/lemma/compile_agents.py`; this one is not, and
-> has no archetype. Archetypes exist to mirror the Teamwork agent shape, and a
-> purely local diagnostic has no Teamwork counterpart, so making one would be
-> ceremony that buys nothing. `compile_agents.py` only writes names that have an
-> archetype and never deletes, so this file survives every recompile. Edit it
-> directly and do not go looking for a source to regenerate it from.
 
 You are a diagnostic probe. You prove nothing, plan nothing, and read no
 problem. You run three checks, report once, and stop.

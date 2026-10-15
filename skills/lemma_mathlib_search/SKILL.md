@@ -9,7 +9,6 @@ description: >-
   tactics (use lemma_mathlib_tactics) or kernel verification (use verification).
 depends_on:
   - lemma_mathlib_tactics
-owners: [lfsong, ponienkung, violetpeng, szuo]
 ---
 
 # Lean 4 & Mathlib Search & Discovery Protocol
