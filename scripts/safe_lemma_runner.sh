@@ -13,11 +13,11 @@
 #                    so Codex re-loads the orchestrator skill on restart.
 #
 # Examples:
-#   LEAP_AGENT_CLI=claude LEAP_TARGET_DIR=runs/p1 ./safe_lemma_runner.sh \
+#   LEAP_AGENT_CLI=claude LEAP_TARGET_DIR=runs/p1 <leap-cli>/scripts/safe_lemma_runner.sh \
 #       --agent orchestrator-lemma -p "Prove problems/p1.lean; problem root: runs/p1"
 #   LEAP_AGENT_CLI=codex LEAP_RESUME_FLAG= LEAP_RESUME_PREFIX='$leap-prove ' \
 #       LEAP_TARGET_DIR=runs/p1 \
-#       ./safe_lemma_runner.sh exec "\$leap-prove Prove problems/p1.lean; problem root: runs/p1"
+#       <leap-cli>/scripts/safe_lemma_runner.sh exec "\$leap-prove Prove problems/p1.lean; problem root: runs/p1"
 # ==============================================================================
 set -u
 HERE="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
@@ -65,7 +65,7 @@ while true; do
     if [[ -n "${TARGET_DIR}" ]]; then
       echo "[$(date)] Releasing stranded claims in ${TARGET_DIR} via release_all..."
       state_manager_bin --root_dir="${TARGET_DIR}" --action=release_all \
-        || "${LEAP_PYTHON:-python3}" "${HERE}/state_manager.py" \
+        || "${LEAP_PYTHON:-python3}" "${HERE}/../leap/state_manager.py" \
              --root_dir="${TARGET_DIR}" --action=release_all || true
     fi
 

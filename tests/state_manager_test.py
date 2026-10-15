@@ -3,6 +3,7 @@
 The Lean verifier is stubbed, so these run offline and deterministically.
 """
 
+import _path  # noqa: F401  (puts leap/ on sys.path)
 import os
 import re
 import tempfile

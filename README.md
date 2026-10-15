@@ -172,12 +172,12 @@ There is no give-up exit. Long runs are normal.
 
 ### Long or unattended runs
 
-[`safe_lemma_runner.sh`](safe_lemma_runner.sh) relaunches a headless CLI until
+[`scripts/safe_lemma_runner.sh`](scripts/safe_lemma_runner.sh) relaunches a headless CLI until
 the orchestrator log records a verified `[PHASE 5: COMPLETE]`. On every restart
 it releases any stranded claims and resumes from the existing graph:
 
 ```bash
-LEAP_AGENT_CLI=claude LEAP_TARGET_DIR=runs/my_problem ./safe_lemma_runner.sh \
+LEAP_AGENT_CLI=claude LEAP_TARGET_DIR=runs/my_problem /path/to/leap-cli/scripts/safe_lemma_runner.sh \
   --agent orchestrator-lemma -p "Prove problems/my_problem.lean. Problem root: runs/my_problem"
 ```
 
@@ -210,6 +210,20 @@ lean_search_tool_bin --query="AM-GM inequality for two reals"
 lean_search_tool_bin --query="Real.sqrt, Irrational" --backend=loogle
 ```
 
+## Repository layout
+
+```
+agents/      host-neutral agent prompts (orchestrator, provers, reviewer, verifier)
+skills/      Mathlib search and tactics skills shared by the agents
+leap/        the Python state layer: state manager, proof DAG, phase machine,
+             verifier and search clients, leap_doctor
+bin/         the CLI entry points the agents call (put this on PATH)
+scripts/     safe_lemma_runner.sh for long unattended runs
+tests/       offline test suite
+docs/        architecture reference and testing notes
+install.py   renders agents/ + skills/ for Claude Code, Codex or Antigravity
+```
+
 [`docs/architecture.md`](docs/architecture.md) is the full reference. It
 covers the per-node phase machine, every action and flag, the workspace
 layout, and the concurrency model.
@@ -233,13 +247,13 @@ layout, and the concurrency model.
 ## Tests
 
 ```bash
-pip install -r requirements-test.txt
-for t in *_test.py; do python3 "$t" || break; done
+pip install -r tests/requirements.txt
+python3 -m unittest discover -s tests -p '*_test.py'
 ```
 
 The suite has about 870 tests. All are offline: Lean and the search services
 are stubbed. To run the live checks against your verifier, see
-[`Testing.md`](Testing.md).
+[`docs/testing.md`](docs/testing.md).
 
 ## Notes and limitations
 

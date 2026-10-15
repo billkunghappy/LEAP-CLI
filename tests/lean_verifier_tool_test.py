@@ -3,7 +3,7 @@
 The live tests call the configured verifier (kimina or local Lean), so they
 are skipped unless LEMMA_LIVE_VERIFIER=1:
 
-    LEMMA_LIVE_VERIFIER=1 python3 lean_verifier_tool_test.py
+    LEMMA_LIVE_VERIFIER=1 python3 tests/lean_verifier_tool_test.py
 
 They pin the two properties the soundness gate depends on, both of which are
 easy to regress silently:
@@ -16,6 +16,7 @@ easy to regress silently:
 
 """
 
+import _path  # noqa: F401  (puts leap/ on sys.path)
 import contextlib
 import json
 import os

@@ -24,6 +24,7 @@ fixture exercises none of them.
 The Lean verifier is stubbed, so this runs offline.
 """
 
+import _path  # noqa: F401  (puts leap/ on sys.path)
 import os
 import tempfile
 from unittest import mock

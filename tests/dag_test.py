@@ -3,6 +3,7 @@
 Pure logic, no network and no Lean verifier required.
 """
 
+import _path  # noqa: F401  (puts leap/ on sys.path)
 import unittest
 
 from absl.testing import absltest

@@ -1,9 +1,10 @@
 """Tests for the Lean 4 parsing and signature-rendering utilities.
 
 Pure logic, no network and no Lean verifier required. Run with a plain
-`python3 lean_code_parser_test.py`.
+`python3 tests/lean_code_parser_test.py`.
 """
 
+import _path  # noqa: F401  (puts leap/ on sys.path)
 import unittest
 
 from absl.testing import absltest

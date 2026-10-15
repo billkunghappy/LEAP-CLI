@@ -6,4 +6,4 @@
 # resolve no matter where this is called from.
 set -euo pipefail
 HERE="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
-exec "${LEAP_PYTHON:-python3}" "${HERE}/../lean_verifier_tool.py" "$@"
+exec "${LEAP_PYTHON:-python3}" "${HERE}/../leap/lean_verifier_tool.py" "$@"

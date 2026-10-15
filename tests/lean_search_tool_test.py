@@ -1,5 +1,6 @@
 """Unit tests for lean_search_tool. All offline: HTTP is stubbed."""
 
+import _path  # noqa: F401  (puts leap/ on sys.path)
 import json
 import os
 import tempfile

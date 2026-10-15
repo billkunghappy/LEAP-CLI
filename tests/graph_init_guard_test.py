@@ -1,5 +1,6 @@
 """Tests for graph_init_guard."""
 
+import _path  # noqa: F401  (puts leap/ on sys.path)
 from absl.testing import absltest
 
 import graph_init_guard

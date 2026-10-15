@@ -18,6 +18,7 @@ stub. Only the graph is a fixture, and it is the smallest one that has a
 decomposition to retire.
 """
 
+import _path  # noqa: F401  (puts leap/ on sys.path)
 import os
 import tempfile
 

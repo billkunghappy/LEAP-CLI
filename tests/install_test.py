@@ -1,5 +1,6 @@
 """Tests for install.py: every host gets a complete, parseable layout."""
 
+import _path  # noqa: F401  (puts leap/ on sys.path)
 import contextlib
 import io
 import json

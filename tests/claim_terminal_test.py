@@ -11,6 +11,7 @@ covers the one thing that cannot be checked that way: that the real CLI path
 actually reaches this module.
 """
 
+import _path  # noqa: F401  (puts leap/ on sys.path)
 import os
 import tempfile
 

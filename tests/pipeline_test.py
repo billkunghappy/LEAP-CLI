@@ -3,6 +3,7 @@
 Pure logic, no network, no Lean verifier and no model required.
 """
 
+import _path  # noqa: F401  (puts leap/ on sys.path)
 import copy
 import dataclasses
 import unittest

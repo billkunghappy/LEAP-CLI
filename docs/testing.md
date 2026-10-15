@@ -1,11 +1,12 @@
 # Testing
 
-Every test file runs standalone with `python3 <file>`. The suite is offline and
+Tests live in `tests/`; each file also runs standalone with
+`python3 tests/<file>`. The suite is offline and
 deterministic: the Lean verifier and both search services are stubbed.
 
 ```bash
-pip install -r requirements.txt -r requirements-test.txt
-for t in *_test.py; do python3 "$t" || break; done
+pip install -r requirements.txt -r tests/requirements.txt
+python3 -m unittest discover -s tests -p '*_test.py'
 ```
 
 | File | Covers |
@@ -31,9 +32,9 @@ parsed). They use whatever verifier you have configured and are skipped unless
 `LEMMA_LIVE_VERIFIER=1`:
 
 ```bash
-LEAN_PROJECT_DIR=~/lean/leap-mathlib LEMMA_LIVE_VERIFIER=1 python3 lean_verifier_tool_test.py
+LEAN_PROJECT_DIR=~/lean/leap-mathlib LEMMA_LIVE_VERIFIER=1 python3 tests/lean_verifier_tool_test.py
 # or
-LEAN_VERIFIER_URL=http://localhost:8000 LEMMA_LIVE_VERIFIER=1 python3 lean_verifier_tool_test.py
+LEAN_VERIFIER_URL=http://localhost:8000 LEMMA_LIVE_VERIFIER=1 python3 tests/lean_verifier_tool_test.py
 ```
 
 Run them once after setting up a verifier: they are what proves the soundness

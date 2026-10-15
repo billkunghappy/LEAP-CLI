@@ -813,7 +813,7 @@ hand-driven entry points for the same machinery.
 #### `lean_verifier_tool_bin`
 
 Compiles Lean 4 and reports whether the kernel accepted it, plus which axioms
-the target depends on. Entry point: `lean_verifier_tool.py`. Two backends:
+the target depends on. Entry point: `leap/lean_verifier_tool.py`. Two backends:
 
 | Backend  | Selected by                                   | What it does |
 | :------- | :-------------------------------------------- | :----------- |
@@ -846,7 +846,7 @@ the target depends on. Entry point: `lean_verifier_tool.py`. Two backends:
 #### `lean_search_tool_bin`
 
 Mathlib search, for finding the canonical name of a structure or a lemma
-before writing tactics. Entry point: `lean_search_tool.py`.
+before writing tactics. Entry point: `leap/lean_search_tool.py`.
 
 | Flag               | Default                                   | Notes |
 | :----------------- | :---------------------------------------- | :---- |
