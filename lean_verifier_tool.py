@@ -1,14 +1,21 @@
 r"""Lean 4 Proof Verifier CLI Tool and Library for the LEMMA harness.
 
 Provides a clean, lightweight CLI and Python interface for LEMMA agents
-to verify Lean 4 proofs via a Lean Verifier Service. Uses authoritative
+to verify Lean 4 proofs via kimina-lean-server or a local Lean install. Uses authoritative
 Lean 4 '#print axioms' checking to guarantee mathematical soundness.
 
-This module ships no verifier endpoint of its own. Point it at a service
-speaking the wire contract documented in `VERIFIER_WIRE_CONTRACT` below, via
-the `LEAN_VERIFIER_URL` environment variable, the `--verifier_url` flag, or
-`LeanVerifierInput.verifier_url`. Calling it unconfigured raises
-`NotImplementedError` rather than silently reporting proofs as unverifiable.
+Two backends, selected by `LEAN_VERIFIER_BACKEND` (or inferred):
+
+  kimina -- POST to a kimina-lean-server (https://github.com/project-numina/
+            kimina-lean-server) at `LEAN_VERIFIER_URL` / `--verifier_url`.
+            Optional `LEAN_VERIFIER_API_KEY` is sent as `Authorization: Bearer`.
+  local  -- run `lake env lean --json` inside a local Lean project that depends
+            on Mathlib (`LEAN_PROJECT_DIR`). No server needed.
+
+When `LEAN_VERIFIER_BACKEND` is unset, a configured URL selects `kimina` and
+otherwise a configured `LEAN_PROJECT_DIR` selects `local`. Calling it with
+neither configured raises `NotImplementedError` rather than silently reporting
+proofs as unverifiable.
 
 Usage (Python API):
   import lean_verifier_tool
@@ -25,7 +32,10 @@ import asyncio
 import json
 import os
 import re
+import shutil
+import subprocess
 import sys
+import tempfile
 import time
 from typing import Any, Dict, List, Literal, Optional, Tuple, overload
 import urllib.error
@@ -67,21 +77,20 @@ except (ImportError, ModuleNotFoundError):
   _HAS_ABSL = False
 
 
-#: Base URL of the Lean 4 verifier service. Empty by design: the deployment
-#: this harness was developed against is not public, so an external install has
-#: to bring its own. Set `LEAN_VERIFIER_URL`, pass `--verifier_url`, or set
-#: `LeanVerifierInput.verifier_url`. Unset, every verification call raises
-#: `NotImplementedError` -- see `VERIFIER_WIRE_CONTRACT`.
+#: Base URL of a kimina-lean-server (or any service speaking
+#: `VERIFIER_WIRE_CONTRACT`). Empty by default.
 DEFAULT_VERIFIER_URL = os.environ.get("LEAN_VERIFIER_URL", "")
 
-#: How requests to the verifier are authenticated.
-#:
-#: "none" (the default) sends no Authorization header, which is what a
-#: self-hosted or reverse-proxied Lean service wants. Any other value selects a
-#: token provider, and this release ships none -- the original harness minted a
-#: Google Cloud ID token for a Cloud Run deployment, which has no meaning
-#: outside that environment. See `get_id_token`.
-VERIFIER_AUTH_MODE = os.environ.get("LEAN_VERIFIER_AUTH", "none")
+#: Optional API key for the kimina server (its `LEAN_SERVER_API_KEY`). Sent as
+#: `Authorization: Bearer <key>`. Unset means no Authorization header.
+VERIFIER_API_KEY = os.environ.get("LEAN_VERIFIER_API_KEY", "")
+
+#: Root of a local Lean 4 project with Mathlib as a dependency (the directory
+#: holding `lakefile.lean`/`lakefile.toml`), for the `local` backend.
+LEAN_PROJECT_DIR = os.environ.get("LEAN_PROJECT_DIR", "")
+
+#: "kimina", "local", or "" to infer from what is configured.
+VERIFIER_BACKEND = os.environ.get("LEAN_VERIFIER_BACKEND", "").strip().lower()
 
 #: The HTTP contract `run_lean_verifier` speaks, spelled out so an external
 #: deployment can be stood up against it without reading the request code. It
@@ -191,59 +200,30 @@ class LeanVerifierOutput(pydantic.BaseModel):
   )
 
 
-def get_id_token(verifier_url: str) -> Optional[str]:
-  """Returns the bearer token for `verifier_url`, or None when unauthenticated.
+def _auth_headers() -> Dict[str, str]:
+  """Authorization header for the kimina server, if an API key is set.
 
-  Selected by `VERIFIER_AUTH_MODE` (`LEAN_VERIFIER_AUTH`):
-
-    "none"  -- the default and the only mode this release implements. Returns
-               None, and the caller sends no Authorization header. Correct for
-               a self-hosted Lean service, or one behind a reverse proxy that
-               terminates auth itself.
-
-    anything else -- raises `NotImplementedError`.
-
-  The harness this was extracted from ran its verifier on Google Cloud Run,
-  which requires a signed Google ID token whose `aud` claim equals the service
-  URL. That flow tried three sources in order, and an external replacement
-  wanting the same behaviour needs to reimplement it here:
-
-    1. Application Default Credentials. Read the JSON at
-       `$GOOGLE_APPLICATION_CREDENTIALS`; if it carries a `refresh_token`,
-       POST `client_id`, `client_secret`, `refresh_token` and
-       `grant_type=refresh_token` (form-encoded) to
-       `https://oauth2.googleapis.com/token` and take the `id_token` field of
-       the JSON reply.
-    2. `gcloud auth print-identity-token`, whose stdout is the raw token.
-    3. The GCE/Cloud Run metadata server identity endpoint, with `audience`
-       set to `verifier_url`.
-
-  Whatever replaces this must return a raw token string; the caller sends it
-  as `Authorization: bearer <token>`. Returning None means "no header".
-
-  Args:
-    verifier_url: Base URL being called. An audience-scoped token provider
-      needs it; an audience-free one can ignore it.
-
-  Returns:
-    The bearer token, or None when the endpoint takes unauthenticated calls.
-
-  Raises:
-    NotImplementedError: For any `VERIFIER_AUTH_MODE` other than "none".
+  kimina-lean-server strips a case-sensitive "Bearer " prefix before comparing
+  the key, so the capitalisation here matters.
   """
-  if VERIFIER_AUTH_MODE == "none":
-    return None
+  key = os.environ.get("LEAN_VERIFIER_API_KEY", VERIFIER_API_KEY)
+  return {"Authorization": f"Bearer {key}"} if key else {}
 
-  raise NotImplementedError(
-      f"LEAN_VERIFIER_AUTH={VERIFIER_AUTH_MODE!r} requests a verifier token"
-      f" provider for {verifier_url!r}, and this release ships none. The"
-      " original implementation minted a Google Cloud ID token, which is"
-      " meaningless outside that deployment. Implement get_id_token() against"
-      " your own identity provider -- its contract is in this function's"
-      " docstring -- or unset LEAN_VERIFIER_AUTH to call the endpoint"
-      " unauthenticated."
-  )
 
+def _resolve_backend(verifier_url: str) -> str:
+  """Picks the verifier backend from explicit config, then what is set."""
+  backend = os.environ.get("LEAN_VERIFIER_BACKEND", VERIFIER_BACKEND).strip().lower()
+  if backend in ("kimina", "local"):
+    return backend
+  if backend:
+    raise ValueError(
+        f"LEAN_VERIFIER_BACKEND={backend!r} is not one of 'kimina', 'local'."
+    )
+  if verifier_url:
+    return "kimina"
+  if os.environ.get("LEAN_PROJECT_DIR", LEAN_PROJECT_DIR):
+    return "local"
+  return ""
 
 
 def extract_info_messages(proof: str, messages: List[Dict[str, Any]]) -> str:
@@ -344,58 +324,16 @@ def _normalize_lean_imports(code: str) -> str:
   return header
 
 
-def run_lean_verifier(input_data: LeanVerifierInput) -> LeanVerifierOutput:
-  """Verifies a Lean 4 proof using the Lean Verifier Service.
+def _check_kimina(
+    code: str, timeout: int, verifier_url: str
+) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
+  """Sends one snippet to a kimina-lean-server.
 
-  Args:
-    input_data: Code, optional target theorem, endpoint override and timeout.
-
-  Returns:
-    The verdict. `is_infra_failure=True` means no verdict was reached and says
-    nothing about the mathematics.
-
-  Raises:
-    NotImplementedError: No verifier endpoint is configured. This release does
-      not ship one, so it cannot fall back to a default -- and reporting the
-      absence as `is_valid=False` would look like Lean rejecting every proof.
+  Returns `(result, None)` with the first entry of the reply's `results`, or
+  `(None, reason)` when no verdict was obtained.
   """
-  code = input_data.code.strip()
-  if not code:
-    return LeanVerifierOutput(
-        is_valid=False,
-        error_message="Empty code provided.",
-    )
+  headers = {"Content-Type": "application/json", **_auth_headers()}
 
-  code = _normalize_lean_imports(code)
-
-
-  # Inject #print axioms natively if we have a target
-  if input_data.target_name:
-    code += f"\n#print axioms {input_data.target_name}\n"
-
-
-  verifier_url = (input_data.verifier_url or DEFAULT_VERIFIER_URL).rstrip("/")
-  if not verifier_url:
-    raise NotImplementedError(
-        "No Lean verifier endpoint is configured. This release ships no"
-        " default -- the deployment it was developed against is not public."
-        " Set the LEAN_VERIFIER_URL environment variable, pass --verifier_url,"
-        " or set LeanVerifierInput.verifier_url to a service speaking the"
-        " following contract:\n\n"
-        + VERIFIER_WIRE_CONTRACT
-    )
-
-  is_local = any(
-      h in verifier_url for h in ["localhost", "127.0.0.1", "0.0.0.0"]
-  )
-
-  headers = {"Content-Type": "application/json"}
-  if not is_local:
-    token = get_id_token(verifier_url)
-    if token:
-      headers["Authorization"] = f"bearer {token}"
-
-  # Construct request payload matching Kimina API check format.
   # Deliberately no 'infotree': the server renders the full tactic tree with
   # every goal state pretty-printed, which nothing here reads -- only
   # 'response.messages' is consumed. On a 4077-line assembly it cost 576s /
@@ -403,7 +341,7 @@ def run_lean_verifier(input_data: LeanVerifierInput) -> LeanVerifierOutput:
   # 'read operation timed out' failures on large proof trees.
   payload = json.dumps({
       "snippets": [{"id": "check_0", "code": code}],
-      "timeout": input_data.timeout,
+      "timeout": timeout,
       "debug": False,
       "reuse": True,
   }).encode("utf-8")
@@ -415,7 +353,7 @@ def run_lean_verifier(input_data: LeanVerifierInput) -> LeanVerifierOutput:
   # The payload 'timeout' bounds the Lean compile only; the server still has to
   # serialize and ship the result afterwards. Giving the socket the same budget
   # meant any job using most of its compile time could never return.
-  socket_timeout = input_data.timeout + _SOCKET_TIMEOUT_HEADROOM_SEC
+  socket_timeout = timeout + _SOCKET_TIMEOUT_HEADROOM_SEC
 
   for attempt in range(max(1, _MAX_TRANSPORT_ATTEMPTS)):
     retryable = False
@@ -447,25 +385,135 @@ def run_lean_verifier(input_data: LeanVerifierInput) -> LeanVerifierOutput:
     time.sleep(_RETRY_BACKOFF_SEC[min(attempt, len(_RETRY_BACKOFF_SEC) - 1)])
 
   if resp_data is None:
+    return None, (
+        f"request failed after {max(1, _MAX_TRANSPORT_ATTEMPTS)} attempt(s):"
+        f" {last_err}"
+    )
+  results = resp_data.get("results", [])
+  if not results:
+    return None, "no verification results returned from verifier service"
+  return results[0], None
+
+
+def _check_local(
+    code: str, timeout: int
+) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
+  """Compiles one snippet with `lake env lean --json` in `LEAN_PROJECT_DIR`.
+
+  Produces the same `{"response": {"messages": [...]}}` / `{"error": ...}`
+  shape a kimina server returns, so everything downstream is shared. `lean
+  --json` prints one message object per line with `severity`, `pos` and `data`.
+  """
+  project = os.environ.get("LEAN_PROJECT_DIR", LEAN_PROJECT_DIR)
+  if not project or not os.path.isdir(project):
+    return None, f"LEAN_PROJECT_DIR={project!r} is not a directory"
+  lake = shutil.which("lake")
+  if lake is None:
+    return None, "`lake` is not on PATH; install Lean via elan"
+
+  fd, path = tempfile.mkstemp(prefix="leap_check_", suffix=".lean")
+  try:
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+      f.write(code)
+    try:
+      proc = subprocess.run(
+          [lake, "env", "lean", "--json", path],
+          cwd=project,
+          capture_output=True,
+          text=True,
+          timeout=timeout,
+          check=False,
+      )
+    except subprocess.TimeoutExpired:
+      return {"error": f"Lean compile timeout after {timeout}s"}, None
+    except OSError as e:
+      return None, str(e)
+  finally:
+    try:
+      os.unlink(path)
+    except OSError:
+      pass
+
+  messages = []
+  for line in proc.stdout.splitlines():
+    line = line.strip()
+    if not line.startswith("{"):
+      continue
+    try:
+      msg = json.loads(line)
+    except json.JSONDecodeError:
+      continue
+    if isinstance(msg, dict) and "severity" in msg:
+      messages.append(msg)
+
+  if proc.returncode != 0 and not any(
+      m.get("severity") == "error" for m in messages
+  ):
+    # Lean failed without reporting a source error: missing toolchain, a
+    # broken project, an out-of-memory kill. Nothing was decided.
+    detail = (proc.stderr or proc.stdout).strip()[-2000:]
+    return None, f"lean exited {proc.returncode}: {detail}"
+  return {"response": {"messages": messages}}, None
+
+
+def run_lean_verifier(input_data: LeanVerifierInput) -> LeanVerifierOutput:
+  """Verifies a Lean 4 proof with the configured backend (kimina or local).
+
+  Args:
+    input_data: Code, optional target theorem, endpoint override and timeout.
+
+  Returns:
+    The verdict. `is_infra_failure=True` means no verdict was reached and says
+    nothing about the mathematics.
+
+  Raises:
+    NotImplementedError: No verifier is configured -- reporting the absence as
+      `is_valid=False` would look like Lean rejecting every proof.
+  """
+  code = input_data.code.strip()
+  if not code:
+    return LeanVerifierOutput(
+        is_valid=False,
+        error_message="Empty code provided.",
+    )
+
+  code = _normalize_lean_imports(code)
+
+
+  # Inject #print axioms natively if we have a target
+  if input_data.target_name:
+    code += f"\n#print axioms {input_data.target_name}\n"
+
+
+  verifier_url = (input_data.verifier_url or DEFAULT_VERIFIER_URL).rstrip("/")
+  backend = _resolve_backend(verifier_url)
+  if backend == "local":
+    res, last_err = _check_local(code, input_data.timeout)
+  elif backend == "kimina":
+    if not verifier_url:
+      raise NotImplementedError(
+          "LEAN_VERIFIER_BACKEND=kimina but no LEAN_VERIFIER_URL is set."
+      )
+    res, last_err = _check_kimina(code, input_data.timeout, verifier_url)
+  else:
+    raise NotImplementedError(
+        "No Lean verifier is configured. Either:\n"
+        "  * install Lean + Mathlib locally and set LEAN_PROJECT_DIR to a Lake"
+        " project that depends on Mathlib (backend 'local'), or\n"
+        "  * run a kimina-lean-server and set LEAN_VERIFIER_URL to its base URL"
+        " (backend 'kimina'), plus LEAN_VERIFIER_API_KEY if it has one.\n\n"
+        "Any other service must speak this contract:\n\n"
+        + VERIFIER_WIRE_CONTRACT
+    )
+
+  if res is None:
     # No verdict was obtained, so this says nothing about the proof.
     return LeanVerifierOutput(
         is_valid=False,
         is_infra_failure=True,
-        error_message=(
-            "Lean verifier service request failed after"
-            f" {max(1, _MAX_TRANSPORT_ATTEMPTS)} attempt(s): {last_err}"
-        ),
+        error_message=f"Lean verifier ({backend}) failed: {last_err}",
     )
 
-  results = resp_data.get("results", [])
-  if not results:
-    return LeanVerifierOutput(
-        is_valid=False,
-        is_infra_failure=True,
-        error_message="No verification results returned from verifier service.",
-    )
-
-  res = results[0]
   if res.get("error"):
     # A server-side timeout is an infra failure wearing a result's clothing: the
     # snippet never finished elaborating, so nothing was decided about it.
@@ -697,7 +745,16 @@ def main(argv: List[str]) -> None:
       verifier_url=verifier_url,
       timeout=timeout,
   )
-  output = run_lean_verifier(input_data)
+  try:
+    output = run_lean_verifier(input_data)
+  except (NotImplementedError, ValueError) as e:
+    # Unconfigured: say how to configure, without a traceback.
+    if json_output:
+      print(json.dumps({"is_valid": False, "is_infra_failure": True,
+                        "error_message": str(e)}))
+    else:
+      print(f"CONFIG ERROR: {e}", file=sys.stderr)
+    sys.exit(2)
 
   if json_output:
     print(output.model_dump_json(indent=2))

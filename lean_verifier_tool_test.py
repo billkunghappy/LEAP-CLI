@@ -1,6 +1,7 @@
 """Contract tests for the Lean verifier client against a live Lean service.
 
-These make real network calls, so they are skipped unless LEMMA_LIVE_VERIFIER=1:
+The live tests call the configured verifier (kimina or local Lean), so they
+are skipped unless LEMMA_LIVE_VERIFIER=1:
 
     LEMMA_LIVE_VERIFIER=1 python3 lean_verifier_tool_test.py
 
@@ -27,7 +28,7 @@ import lean_verifier_tool as lv  # pylint: disable=g-import-not-at-top
 
 
 _LIVE = os.environ.get("LEMMA_LIVE_VERIFIER") == "1"
-_SKIP_REASON = "Set LEMMA_LIVE_VERIFIER=1 to run against the live Lean service."
+_SKIP_REASON = "Set LEMMA_LIVE_VERIFIER=1 to run against the configured Lean verifier."
 
 # The standard Lean axioms every ordinary classical proof may depend on.
 _STANDARD = {"propext", "Classical.choice", "Quot.sound"}
@@ -155,8 +156,7 @@ class InfraFailureTest(absltest.TestCase):
           lv.LeanVerifierInput(
               code="theorem t : True := trivial",
               timeout=5,
-              # Local URL short-circuits the ID-token lookup; urlopen is stubbed
-              # anyway, so no request leaves the process.
+              # urlopen is stubbed, so no request leaves the process.
               verifier_url="http://localhost:9999",
           )
       )
@@ -276,6 +276,106 @@ class NamespacedReadbackTest(absltest.TestCase):
     self.assertIsNone(
         self._readback(f"'Prefixed{self.TARGET}' depends on axioms: [sorryAx]")
     )
+
+
+class BackendSelectionTest(absltest.TestCase):
+  """Which backend runs is decided by config, never guessed silently."""
+
+  def _resolve(self, env, url=""):
+    with mock.patch.dict(os.environ, env, clear=False):
+      for k in ("LEAN_VERIFIER_BACKEND", "LEAN_PROJECT_DIR"):
+        if k not in env:
+          os.environ.pop(k, None)
+      with mock.patch.object(lv, "VERIFIER_BACKEND", ""), \
+          mock.patch.object(lv, "LEAN_PROJECT_DIR", ""):
+        return lv._resolve_backend(url)
+
+  def test_url_selects_kimina(self):
+    self.assertEqual(self._resolve({}, "http://h:8000"), "kimina")
+
+  def test_project_dir_selects_local(self):
+    self.assertEqual(self._resolve({"LEAN_PROJECT_DIR": "/x"}), "local")
+
+  def test_explicit_backend_wins(self):
+    self.assertEqual(
+        self._resolve({"LEAN_VERIFIER_BACKEND": "local"}, "http://h"), "local"
+    )
+
+  def test_nothing_configured_raises_not_implemented(self):
+    with mock.patch.dict(os.environ, {}, clear=False):
+      for k in ("LEAN_VERIFIER_BACKEND", "LEAN_PROJECT_DIR", "LEAN_VERIFIER_URL"):
+        os.environ.pop(k, None)
+      with mock.patch.object(lv, "DEFAULT_VERIFIER_URL", ""), \
+          mock.patch.object(lv, "VERIFIER_BACKEND", ""), \
+          mock.patch.object(lv, "LEAN_PROJECT_DIR", ""):
+        with self.assertRaises(NotImplementedError):
+          lv.run_lean_verifier(lv.LeanVerifierInput(code="theorem t : True := trivial"))
+
+
+class KiminaAuthTest(absltest.TestCase):
+
+  def test_api_key_sent_as_capitalised_bearer(self):
+    # kimina-lean-server strips a case-sensitive "Bearer " prefix.
+    seen = {}
+
+    def _open(req, *_a, **_k):
+      seen.update(req.headers)
+      return _fake_response(b'{"results": [{"response": {"messages": []}}]}')()
+
+    with mock.patch.dict(os.environ, {"LEAN_VERIFIER_API_KEY": "k123"}), \
+        mock.patch.object(lv.urllib.request, "urlopen", _open):
+      out = lv.run_lean_verifier(
+          lv.LeanVerifierInput(code="theorem t : True := trivial",
+                               verifier_url="http://localhost:9999")
+      )
+    self.assertTrue(out.is_valid)
+    self.assertEqual(seen.get("Authorization"), "Bearer k123")
+
+
+class LocalBackendTest(absltest.TestCase):
+  """`lake env lean --json` output is mapped onto the kimina message shape."""
+
+  def _run(self, stdout, returncode=0, stderr="", target="t"):
+    proc = mock.Mock(stdout=stdout, stderr=stderr, returncode=returncode)
+    env = {"LEAN_VERIFIER_BACKEND": "local", "LEAN_PROJECT_DIR": "/"}
+    with mock.patch.dict(os.environ, env), \
+        mock.patch.object(lv.shutil, "which", return_value="/usr/bin/lake"), \
+        mock.patch.object(lv.subprocess, "run", return_value=proc) as run:
+      out = lv.run_lean_verifier(
+          lv.LeanVerifierInput(code="theorem t : True := trivial", target_name=target)
+      )
+    return out, run
+
+  def test_clean_compile_with_axioms(self):
+    msg = {"severity": "information", "pos": {"line": 5, "column": 0},
+           "data": "'t' depends on axioms: [propext]"}
+    out, run = self._run(json.dumps(msg) + "\n")
+    self.assertTrue(out.is_valid)
+    self.assertEqual(out.used_axioms, ["propext"])
+    self.assertEqual(run.call_args.args[0][1:4], ["env", "lean", "--json"])
+
+  def test_error_message_is_a_rejection_not_infra(self):
+    msg = {"severity": "error", "pos": {"line": 3, "column": 2},
+           "data": "unknown identifier 'foo'"}
+    out, _ = self._run(json.dumps(msg) + "\n", returncode=1)
+    self.assertFalse(out.is_valid)
+    self.assertFalse(out.is_infra_failure)
+    self.assertIn("unknown identifier", out.error_message)
+
+  def test_crash_without_source_error_is_infra(self):
+    out, _ = self._run("", returncode=1, stderr="unknown package 'Mathlib'")
+    self.assertFalse(out.is_valid)
+    self.assertTrue(out.is_infra_failure)
+    self.assertIn("Mathlib", out.error_message)
+
+  def test_timeout_is_infra(self):
+    env = {"LEAN_VERIFIER_BACKEND": "local", "LEAN_PROJECT_DIR": "/"}
+    with mock.patch.dict(os.environ, env), \
+        mock.patch.object(lv.shutil, "which", return_value="/usr/bin/lake"), \
+        mock.patch.object(lv.subprocess, "run",
+                          side_effect=lv.subprocess.TimeoutExpired("lake", 5)):
+      out = lv.run_lean_verifier(lv.LeanVerifierInput(code="theorem t : True := trivial"))
+    self.assertTrue(out.is_infra_failure)
 
 
 if __name__ == "__main__":
