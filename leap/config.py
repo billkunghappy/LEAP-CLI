@@ -22,6 +22,11 @@ KNOWN_KEYS = (
     "LEAN_SEARCH_SUBAGENT_QUOTA",
 )
 
+#: The Lean release `leap lean` installs. Mathlib tags a release for each Lean
+#: version, so the project pins both the toolchain and Mathlib to this tag.
+LEAN_VERSION = "v4.34.0"
+LEAN_TOOLCHAIN = f"leanprover/lean4:{LEAN_VERSION}"
+
 
 def leap_home() -> str:
   return os.path.expanduser(os.environ.get("LEAP_HOME", "~/.leap"))
@@ -29,6 +34,15 @@ def leap_home() -> str:
 
 def config_path() -> str:
   return os.path.join(leap_home(), "config.json")
+
+
+def project_toolchain(project: str) -> str:
+  """The `lean-toolchain` of a Lake project, or "" if it has none."""
+  try:
+    with open(os.path.join(project, "lean-toolchain"), encoding="utf-8") as f:
+      return f.read().strip()
+  except OSError:
+    return ""
 
 
 def load() -> Dict[str, str]:

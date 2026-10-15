@@ -69,6 +69,37 @@ class LeanKiminaTest(_Home):
                              "LEAN_VERIFIER_URL": "http://h:8000",
                              "LEAN_VERIFIER_API_KEY": "abc"})
 
+  def test_new_project_is_pinned_to_lean_version(self):
+    with mock.patch.object(cli.shutil, "which", return_value="/bin/lake"), \
+        mock.patch.object(cli, "_run") as run, \
+        mock.patch.object(cli, "_probe", return_value=True), \
+        contextlib.redirect_stdout(io.StringIO()):
+      rc = cli.main(["lean"])
+    self.assertEqual(rc, 0)
+    project = os.path.join(self.tmp.name, "leap_lean")
+    self.assertEqual(config.project_toolchain(project),
+                     "leanprover/lean4:" + config.LEAN_VERSION)
+    with open(os.path.join(project, "lakefile.toml")) as f:
+      self.assertIn(f'rev = "{config.LEAN_VERSION}"', f.read())
+    self.assertEqual([c.args[0][1:] for c in run.call_args_list],
+                     [["update"], ["exe", "cache", "get"], ["build"]])
+    self.assertEqual(config.load()["LEAN_PROJECT_DIR"], project)
+
+  def test_default_project_on_other_toolchain_is_refused(self):
+    project = os.path.join(self.tmp.name, "leap_lean")
+    os.makedirs(project)
+    for name, text in (("lakefile.toml", ""),
+                       ("lean-toolchain", "leanprover/lean4:v4.20.0\n")):
+      with open(os.path.join(project, name), "w") as f:
+        f.write(text)
+    with mock.patch.object(cli.shutil, "which", return_value="/bin/lake"), \
+        mock.patch.object(cli, "_run") as run, \
+        contextlib.redirect_stdout(io.StringIO()):
+      rc = cli.main(["lean"])
+    self.assertEqual(rc, 1)
+    run.assert_not_called()
+    self.assertEqual(config.load(), {})
+
   def test_existing_project_without_lakefile_is_refused(self):
     with mock.patch.object(cli.shutil, "which", return_value="/bin/lake"), \
         contextlib.redirect_stdout(io.StringIO()):

@@ -1,11 +1,15 @@
 """The `leap` command and the console entry points the agents call.
 
-  leap lean                 one-time: install Lean (elan) + a Mathlib project
+  leap lean                 one-time: install Lean (elan) + a Mathlib project,
+                            pinned to config.LEAN_VERSION
   leap lean --kimina URL    ...or use a kimina-lean-server instead
   leap init claude          put the agents + skills into the current directory
   leap doctor               check everything is wired up
   leap loop claude ...      keep an agent CLI running until the proof is done
   leap config               show saved settings
+
+The tools-only `leap-tools` wheel ships this module without the agents, skills
+and runner, so it offers only `lean`, `doctor` and `config`.
 
 The modules in this package import each other flatly (`import dag`), as they
 did when run as scripts, so every entry point puts the package directory on
@@ -26,10 +30,11 @@ if PKG_DIR not in sys.path:
 
 import config  # pylint: disable=g-import-not-at-top,wrong-import-position
 
-MATHLIB_TOOLCHAIN = "leanprover-community/mathlib4:lean-toolchain"
 ELAN_INSTALL = ("curl -sSf https://elan.lean-lang.org/elan-init.sh"
                 " | sh -s -- -y --default-toolchain none")
 HOSTS = ("claude", "codex", "antigravity")
+HAS_AGENTS = os.path.isdir(os.path.join(PKG_DIR, "agents"))
+HAS_RUNNER = os.path.exists(os.path.join(PKG_DIR, "safe_lemma_runner.sh"))
 
 
 # --------------------------------------------------------------------------
@@ -93,6 +98,31 @@ def _probe() -> bool:
   return False
 
 
+def _write_mathlib_project(project: str) -> None:
+  """Writes a minimal Lake project pinned to config.LEAN_VERSION.
+
+  `lake new <name> math` would follow Mathlib master, whose toolchain moves on
+  every Lean release, so the files are written here instead.
+  """
+  os.makedirs(project, exist_ok=True)
+  files = {
+      "lean-toolchain": config.LEAN_TOOLCHAIN + "\n",
+      "lakefile.toml": (
+          'name = "leap_lean"\n'
+          'defaultTargets = ["LeapLean"]\n\n'
+          "[[require]]\n"
+          'name = "mathlib"\n'
+          'scope = "leanprover-community"\n'
+          f'rev = "{config.LEAN_VERSION}"\n\n'
+          "[[lean_lib]]\n"
+          'name = "LeapLean"\n'),
+      "LeapLean.lean": "import Mathlib\n",
+  }
+  for name, content in files.items():
+    with open(os.path.join(project, name), "w", encoding="utf-8") as f:
+      f.write(content)
+
+
 def cmd_lean(args) -> int:
   config.apply()
   if args.kimina:
@@ -133,10 +163,20 @@ def cmd_lean(args) -> int:
       print(f"{project} has no lakefile. Point --project at a Lake project that"
             " depends on Mathlib, or omit it to let leap create one.")
       return 1
-    _say(f"Creating a Mathlib project at {project}")
-    os.makedirs(os.path.dirname(project), exist_ok=True)
-    _run([lake, f"+{MATHLIB_TOOLCHAIN}", "new", os.path.basename(project), "math"],
-         cwd=os.path.dirname(project))
+    _say(f"Creating a Mathlib project at {project} (Lean {config.LEAN_VERSION})")
+    _write_mathlib_project(project)
+    # elan installs the pinned toolchain on first use; this resolves Mathlib.
+    _run([lake, "update"], cwd=project)
+  else:
+    toolchain = config.project_toolchain(project)
+    if toolchain != config.LEAN_TOOLCHAIN:
+      if not args.project:
+        print(f"{project} uses {toolchain or 'no pinned toolchain'}, but LEAP"
+              f" needs {config.LEAN_TOOLCHAIN}. Remove that directory and re-run"
+              " `leap lean`, or pass --project to keep using it.")
+        return 1
+      print(f"    warning: {project} uses {toolchain or 'no pinned toolchain'};"
+            f" LEAP is tested with {config.LEAN_TOOLCHAIN}.")
 
   # 3. prebuilt Mathlib binaries, then build the project
   _say("Downloading prebuilt Mathlib (a few GB, first time only)")
@@ -226,7 +266,8 @@ def main(argv: Optional[List[str]] = None) -> int:
       prog="leap", description="LEAP: multi-agent Lean 4 theorem proving.")
   sub = parser.add_subparsers(dest="cmd", required=True)
 
-  p = sub.add_parser("lean", help="one-time Lean + Mathlib setup")
+  p = sub.add_parser(
+      "lean", help=f"one-time Lean {config.LEAN_VERSION} + Mathlib setup")
   p.add_argument("--project", help="use an existing Lake project with Mathlib")
   p.add_argument("--kimina", metavar="URL",
                  help="use a kimina-lean-server instead of local Lean")
@@ -234,19 +275,21 @@ def main(argv: Optional[List[str]] = None) -> int:
   p.add_argument("-y", "--yes", action="store_true", help="don't ask")
   p.set_defaults(fn=cmd_lean)
 
-  p = sub.add_parser("init", help="install the agents for one CLI")
-  p.add_argument("host", choices=HOSTS)
-  p.add_argument("--dest", default=".", help="workspace (default: here)")
-  p.set_defaults(fn=cmd_init)
+  if HAS_AGENTS:
+    p = sub.add_parser("init", help="install the agents for one CLI")
+    p.add_argument("host", choices=HOSTS)
+    p.add_argument("--dest", default=".", help="workspace (default: here)")
+    p.set_defaults(fn=cmd_init)
 
   p = sub.add_parser("doctor", help="check the setup")
   p.add_argument("--offline", action="store_true")
   p.set_defaults(fn=cmd_doctor)
 
-  p = sub.add_parser("loop", help="rerun an agent CLI until the proof is done")
-  p.add_argument("--root", help="problem root to watch (default: from prompt)")
-  p.add_argument("cli_args", nargs=argparse.REMAINDER)
-  p.set_defaults(fn=cmd_loop)
+  if HAS_RUNNER:
+    p = sub.add_parser("loop", help="rerun an agent CLI until the proof is done")
+    p.add_argument("--root", help="problem root to watch (default: from prompt)")
+    p.add_argument("cli_args", nargs=argparse.REMAINDER)
+    p.set_defaults(fn=cmd_loop)
 
   p = sub.add_parser("config", help="show saved settings")
   p.set_defaults(fn=cmd_config)

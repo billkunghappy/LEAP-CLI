@@ -4,13 +4,15 @@ build-backend = "hatchling.build"
 [project]
 name = "leap-tools"
 version = "0.1.0"
-description = "LEAP CLI tools only: Lean verifier, Mathlib search, proof-graph state manager (no agents/skills)"
+description = "LEAP CLI tools only: Lean verifier, Mathlib search, proof-graph state manager, plus `leap lean` setup (no agents/skills)"
 requires-python = ">=3.10"
 # absl-py: with absl, state_manager_bin and lean_verifier_tool_bin use absl flag
 # parsing (`--json_output=true`, `--nojson_output`, unknown flags rejected).
 # Without it they fall back to argparse, which has a different CLI contract.
 dependencies = ["pydantic>=2", "absl-py"]
 [project.scripts]
+# `leap lean` installs the pinned Lean + Mathlib; `init`/`loop` are absent here.
+leap = "leap.cli:main"
 lean_verifier_tool_bin = "leap.cli:lean_verifier_tool_bin"
 lean_search_tool_bin = "leap.cli:lean_search_tool_bin"
 state_manager_bin = "leap.cli:state_manager_bin"
@@ -22,6 +24,7 @@ bypass-selection = true
 "../../leap/config.py" = "leap/config.py"
 "../../leap/lean_verifier_tool.py" = "leap/lean_verifier_tool.py"
 "../../leap/lean_search_tool.py" = "leap/lean_search_tool.py"
+"../../leap/leap_doctor.py" = "leap/leap_doctor.py"
 # state_manager_bin and its transitive imports:
 "../../leap/state_manager.py" = "leap/state_manager.py"
 "../../leap/actions.py" = "leap/actions.py"
