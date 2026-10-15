@@ -15,7 +15,8 @@ Two backends, selected by `LEAN_VERIFIER_BACKEND` (or inferred):
 When `LEAN_VERIFIER_BACKEND` is unset, a configured URL selects `kimina` and
 otherwise a configured `LEAN_PROJECT_DIR` selects `local`. Calling it with
 neither configured raises `NotImplementedError` rather than silently reporting
-proofs as unverifiable.
+proofs as unverifiable. A caller can pass `--local` (`local=True` in Python) to
+use the `local` backend regardless of `LEAN_VERIFIER_BACKEND` or any URL.
 
 Usage (Python API):
   import lean_verifier_tool
@@ -66,6 +67,11 @@ try:
   )
   _TIMEOUT = _def_flag(
       "timeout", flags.DEFINE_integer, 700, "Verification timeout in seconds."
+  )
+  _LOCAL = _def_flag(
+      "local", flags.DEFINE_boolean, False,
+      "Use the local backend (LEAN_PROJECT_DIR), ignoring LEAN_VERIFIER_BACKEND"
+      " and any verifier URL."
   )
   _JSON_OUTPUT = _def_flag(
       "json_output", flags.DEFINE_boolean, False, "Whether to print output in JSON format."
@@ -172,6 +178,13 @@ class LeanVerifierInput(pydantic.BaseModel):
   )
   timeout: int = pydantic.Field(
       default=700, description="Verification timeout in seconds."
+  )
+  local: bool = pydantic.Field(
+      default=False,
+      description=(
+          "Use the local backend (LEAN_PROJECT_DIR), ignoring"
+          " LEAN_VERIFIER_BACKEND and any verifier URL."
+      ),
   )
 
 
@@ -471,8 +484,9 @@ def run_lean_verifier(input_data: LeanVerifierInput) -> LeanVerifierOutput:
     nothing about the mathematics.
 
   Raises:
-    NotImplementedError: No verifier is configured -- reporting the absence as
-      `is_valid=False` would look like Lean rejecting every proof.
+    NotImplementedError: No verifier is configured (or `local` is set without
+      `LEAN_PROJECT_DIR`) -- reporting the absence as `is_valid=False` would
+      look like Lean rejecting every proof.
   """
   code = input_data.code.strip()
   if not code:
@@ -492,7 +506,15 @@ def run_lean_verifier(input_data: LeanVerifierInput) -> LeanVerifierOutput:
   verifier_url = (input_data.verifier_url
                   or os.environ.get("LEAN_VERIFIER_URL", DEFAULT_VERIFIER_URL)
                   ).rstrip("/")
-  backend = _resolve_backend(verifier_url)
+  if input_data.local:
+    if not os.environ.get("LEAN_PROJECT_DIR", LEAN_PROJECT_DIR):
+      raise NotImplementedError(
+          "--local needs LEAN_PROJECT_DIR: a Lake project that depends on"
+          " Mathlib. Run `leap lean` once, or set it yourself."
+      )
+    backend = "local"
+  else:
+    backend = _resolve_backend(verifier_url)
   if backend == "local":
     res, last_err = _check_local(code, input_data.timeout)
   elif backend == "kimina":
@@ -596,6 +618,7 @@ def verify_proof(
     target_name: Optional[str] = None,
     return_error_message: Literal[False] = False,
     verifier_url: Optional[str] = None,
+    local: bool = False,
 ) -> bool:
   ...
 
@@ -607,6 +630,7 @@ def verify_proof(
     target_name: Optional[str] = None,
     return_error_message: Literal[True] = True,
     verifier_url: Optional[str] = None,
+    local: bool = False,
 ) -> Tuple[bool, Optional[str]]:
   ...
 
@@ -617,6 +641,7 @@ def verify_proof(
     target_name: Optional[str] = None,
     return_error_message: bool = False,
     verifier_url: Optional[str] = None,
+    local: bool = False,
 ) -> Any:
   """Judge/verify an agent-generated Lean 4 proof attempt.
 
@@ -626,6 +651,7 @@ def verify_proof(
     target_name: Target theorem name to ensure proof correctness for the goal.
     return_error_message: If True, returns a tuple (is_valid, error_message).
     verifier_url: Optional custom Lean verifier service base URL.
+    local: Use the local backend regardless of LEAN_VERIFIER_BACKEND or URL.
 
   Returns:
     - If return_error_message=True: Tuple[bool, Optional[str]]
@@ -636,6 +662,7 @@ def verify_proof(
       target_name=target_name,
       verifier_url=verifier_url,
       timeout=timeout,
+      local=local,
   )
   output = run_lean_verifier(input_data)
   if return_error_message:
@@ -650,6 +677,7 @@ async def verify_proof_async(
     target_name: Optional[str] = None,
     return_error_message: Literal[False] = False,
     verifier_url: Optional[str] = None,
+    local: bool = False,
 ) -> bool:
   ...
 
@@ -661,6 +689,7 @@ async def verify_proof_async(
     target_name: Optional[str] = None,
     return_error_message: Literal[True] = True,
     verifier_url: Optional[str] = None,
+    local: bool = False,
 ) -> Tuple[bool, Optional[str]]:
   ...
 
@@ -671,6 +700,7 @@ async def verify_proof_async(
     target_name: Optional[str] = None,
     return_error_message: bool = False,
     verifier_url: Optional[str] = None,
+    local: bool = False,
 ) -> Any:
   """Asynchronous proof judge interface for concurrent agent proving loops."""
   input_data = LeanVerifierInput(
@@ -678,6 +708,7 @@ async def verify_proof_async(
       target_name=target_name,
       verifier_url=verifier_url,
       timeout=timeout,
+      local=local,
   )
   output: LeanVerifierOutput = await asyncio.to_thread(
       run_lean_verifier, input_data
@@ -694,6 +725,7 @@ def main(argv: List[str]) -> None:
     target_name = _TARGET_NAME.value
     verifier_url = _VERIFIER_URL.value
     timeout = _TIMEOUT.value
+    local = _LOCAL.value
     json_output = _JSON_OUTPUT.value
   else:
     import argparse  # pylint: disable=g-import-not-at-top
@@ -720,6 +752,12 @@ def main(argv: List[str]) -> None:
         "--timeout", type=int, default=700, help="Timeout in seconds"
     )
     parser.add_argument(
+        "--local",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="Use the local backend, ignoring LEAN_VERIFIER_BACKEND and URLs",
+    )
+    parser.add_argument(
         "--json_output",
         action=argparse.BooleanOptionalAction,
         default=False,
@@ -731,6 +769,7 @@ def main(argv: List[str]) -> None:
     target_name = args.target_name
     verifier_url = args.verifier_url
     timeout = args.timeout
+    local = args.local
     json_output = args.json_output
 
   if code_file and os.path.exists(code_file):
@@ -750,6 +789,7 @@ def main(argv: List[str]) -> None:
       target_name=target_name,
       verifier_url=verifier_url,
       timeout=timeout,
+      local=local,
   )
   try:
     output = run_lean_verifier(input_data)

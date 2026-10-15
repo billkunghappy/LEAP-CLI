@@ -316,6 +316,50 @@ class BackendSelectionTest(absltest.TestCase):
           lv.run_lean_verifier(lv.LeanVerifierInput(code="theorem t : True := trivial"))
 
 
+class LocalFlagTest(absltest.TestCase):
+  """`local=True` (`--local`) forces the local backend over any config."""
+
+  def _run(self, env, **kw):
+    proc = mock.Mock(stdout="", stderr="", returncode=0)
+    with mock.patch.dict(os.environ, env), \
+        mock.patch.object(lv.shutil, "which", return_value="/usr/bin/lake"), \
+        mock.patch.object(lv.subprocess, "run", return_value=proc) as run, \
+        mock.patch.object(lv.urllib.request, "urlopen") as urlopen:
+      out = lv.run_lean_verifier(
+          lv.LeanVerifierInput(code="theorem t : True := trivial", **kw))
+    return out, run, urlopen
+
+  def test_local_overrides_kimina_backend_and_url(self):
+    env = {"LEAN_VERIFIER_BACKEND": "kimina", "LEAN_PROJECT_DIR": "/",
+           "LEAN_VERIFIER_URL": "http://h:8000"}
+    out, run, urlopen = self._run(env, local=True, verifier_url="http://x")
+    self.assertTrue(out.is_valid)
+    self.assertEqual(run.call_args.args[0][1:4], ["env", "lean", "--json"])
+    urlopen.assert_not_called()
+
+  def test_local_without_project_dir_raises(self):
+    with mock.patch.dict(os.environ, {}, clear=False):
+      os.environ.pop("LEAN_PROJECT_DIR", None)
+      with mock.patch.object(lv, "LEAN_PROJECT_DIR", ""):
+        with self.assertRaises(NotImplementedError):
+          lv.run_lean_verifier(lv.LeanVerifierInput(
+              code="theorem t : True := trivial", local=True))
+
+  def test_cli_flag_reaches_the_verifier(self):
+    seen = {}
+
+    def _verify(inp):
+      seen["local"] = inp.local
+      return lv.LeanVerifierOutput(is_valid=True)
+
+    with mock.patch.object(lv, "run_lean_verifier", _verify), \
+        mock.patch.object(lv, "_HAS_ABSL", False), \
+        mock.patch("sys.stdout"):
+      lv.main(["lean_verifier_tool_bin", "--code", "theorem t : True := trivial",
+               "--local"])
+    self.assertTrue(seen["local"])
+
+
 class KiminaAuthTest(absltest.TestCase):
 
   def test_api_key_sent_as_capitalised_bearer(self):
