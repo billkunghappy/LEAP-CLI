@@ -73,6 +73,7 @@ class LeanKiminaTest(_Home):
     with mock.patch.object(cli.shutil, "which", return_value="/bin/lake"), \
         mock.patch.object(cli, "_run") as run, \
         mock.patch.object(cli, "_probe", return_value=True), \
+        mock.patch.object(cli, "_setup_any_folder", return_value=True), \
         contextlib.redirect_stdout(io.StringIO()):
       rc = cli.main(["lean"])
     self.assertEqual(rc, 0)
@@ -99,6 +100,58 @@ class LeanKiminaTest(_Home):
     self.assertEqual(rc, 1)
     run.assert_not_called()
     self.assertEqual(config.load(), {})
+
+  def test_any_folder_writes_env_file_and_profile_once(self):
+    home = os.path.join(self.tmp.name, "home")
+    os.makedirs(home)
+    bashrc = os.path.join(home, ".bashrc")
+    with open(bashrc, "w") as f:
+      f.write('export LEAN_PATH="/old"')  # no trailing newline
+    project = os.path.join(self.tmp.name, "leap_lean")
+    os.makedirs(project)
+    with open(os.path.join(project, "lean-toolchain"), "w") as f:
+      f.write(config.LEAN_TOOLCHAIN + "\n")
+    with mock.patch.dict(os.environ, {"HOME": home}), \
+        mock.patch.object(cli.os, "name", "posix"), \
+        mock.patch.object(cli.shutil, "which", return_value="/bin/elan"), \
+        mock.patch.object(cli, "_project_lean_path", return_value="/a:/b"), \
+        mock.patch.object(cli, "_run") as run, \
+        mock.patch.object(cli, "_probe_any_folder", return_value=True), \
+        contextlib.redirect_stdout(io.StringIO()):
+      self.assertTrue(cli._setup_any_folder("/bin/lake", project, True))
+      self.assertTrue(cli._setup_any_folder("/bin/lake", project, True))
+    run.assert_called_with(["/bin/elan", "default", config.LEAN_TOOLCHAIN])
+    with open(os.path.join(self.tmp.name, "env")) as f:
+      self.assertIn('export LEAN_PATH="/a:/b"', f.read())
+    with open(bashrc) as f:
+      lines = f.read().splitlines()
+    self.assertEqual(lines[0], 'export LEAN_PATH="/old"')
+    sources = [l for l in lines if l.endswith('/env"')]
+    self.assertEqual(len(sources), 1)  # idempotent
+    self.assertEqual(lines[-1], sources[0])  # after the old LEAN_PATH
+
+  def test_any_folder_on_windows_sets_user_environment(self):
+    winreg = mock.MagicMock()
+    winreg.QueryValueEx.side_effect = OSError  # no previous LEAN_PATH
+    key = winreg.OpenKey.return_value.__enter__.return_value
+    ctypes = mock.MagicMock()
+    with mock.patch.dict("sys.modules", {"winreg": winreg, "ctypes": ctypes}), \
+        contextlib.redirect_stdout(io.StringIO()):
+      written = cli._persist_lean_path_windows("C:\\a;C:\\b")
+    winreg.SetValueEx.assert_called_once_with(
+        key, "LEAN_PATH", 0, winreg.REG_SZ, "C:\\a;C:\\b")
+    ctypes.windll.user32.SendMessageTimeoutW.assert_called_once()
+    self.assertEqual(written, [r"HKEY_CURRENT_USER\Environment\LEAN_PATH"])
+
+  def test_elan_install_uses_powershell_on_windows(self):
+    with mock.patch.object(cli.os, "name", "nt"), \
+        mock.patch.object(cli.shutil, "which", return_value=None), \
+        mock.patch.object(cli.subprocess, "run") as run, \
+        contextlib.redirect_stdout(io.StringIO()):
+      rc = cli.main(["lean", "-y"])
+    self.assertEqual(rc, 1)  # `lake` still missing after the mocked install
+    self.assertEqual(run.call_args.args[0], cli.ELAN_INSTALL_WINDOWS)
+    self.assertNotIn("shell", run.call_args.kwargs)
 
   def test_existing_project_without_lakefile_is_refused(self):
     with mock.patch.object(cli.shutil, "which", return_value="/bin/lake"), \

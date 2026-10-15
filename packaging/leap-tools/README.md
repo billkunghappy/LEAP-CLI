@@ -21,6 +21,19 @@ from `pip install`. It installs elan if missing, then creates
 `~/.leap/leap_lean` pinned to `leanprover/lean4:v4.34.0` with Mathlib at its
 `v4.34.0` tag, and saves the settings.
 
+Finally, after asking (`-y` skips the question, `--no-global` skips the step),
+it makes plain `lean file.lean` see Mathlib in any folder:
+
+- `elan default leanprover/lean4:v4.34.0`, so `lean` outside a project is
+  v4.34.0. Projects with their own `lean-toolchain` are unaffected.
+- `LEAN_PATH` set to the project's library paths. On Linux/macOS it is written
+  to `~/.leap/env`, which `~/.bashrc`, `~/.zshrc` and/or `~/.profile` source.
+  On Windows it is set in the user environment (`HKCU\Environment`). Open a new
+  terminal to pick it up.
+
+To undo: `elan default <previous toolchain>`, and remove the `~/.leap/env`
+line from your profile (Windows: delete the user `LEAN_PATH` variable).
+
 The wheel is built from the same sources in `../../leap/` via hatchling
 `force-include`, so nothing is duplicated. Build wheels only; an sdist would
 not contain the files:
