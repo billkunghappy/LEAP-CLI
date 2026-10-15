@@ -8,7 +8,7 @@ It is the CLI-agent version of [arXiv:2606.03303](https://arxiv.org/abs/2606.033
 
 ```bash
 pipx install git+https://github.com/billkunghappy/LEAP-CLI   # or: uv tool install / pip install
-leap lean                 # one-time: installs Lean v4.34.0 + Mathlib (~5 GB, 10–20 min)
+leap lean                 # one-time: installs Lean v4.34.0 + Mathlib (~11 GB on disk, 10–20 min)
 
 mkdir my-proofs && cd my-proofs
 leap init claude          # or: codex / antigravity

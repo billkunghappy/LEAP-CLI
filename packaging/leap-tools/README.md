@@ -12,7 +12,7 @@ A pip package with only the three CLI tools the LEAP agents call, plus the
 
 ```bash
 pip install "git+https://github.com/billkunghappy/LEAP-CLI#subdirectory=packaging/leap-tools"
-leap lean      # one-time: Lean v4.34.0 + matching Mathlib (~5 GB, 10–20 min)
+leap lean      # one-time: Lean v4.34.0 + matching Mathlib (~11 GB on disk, 10–20 min)
 leap doctor    # optional: check the setup end to end
 ```
 

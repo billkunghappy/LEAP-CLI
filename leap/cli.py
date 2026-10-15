@@ -179,7 +179,7 @@ def cmd_lean(args) -> int:
             f" LEAP is tested with {config.LEAN_TOOLCHAIN}.")
 
   # 3. prebuilt Mathlib binaries, then build the project
-  _say("Downloading prebuilt Mathlib (a few GB, first time only)")
+  _say("Downloading prebuilt Mathlib (~7 GB, first time only)")
   _run([lake, "exe", "cache", "get"], cwd=project)
   _say("Building")
   _run([lake, "build"], cwd=project)
