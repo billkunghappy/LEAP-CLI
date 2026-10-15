@@ -3352,5 +3352,29 @@ class UnrecognizedSubgoalsTest(ManagerTestCase):
     self.assertTrue(self.load().nodes["root"].and_nodes)
 
 
+class BackupDirTest(absltest.TestCase):
+  """--backup_dir mirrors files atomically into a plain local directory."""
+
+  def test_sync_file_copies_and_leaves_no_temp_files(self):
+    with tempfile.TemporaryDirectory() as tmp:
+      src = os.path.join(tmp, "proof_graph.json")
+      with open(src, "w") as f:
+        f.write('{"nodes": {}}')
+      dest = os.path.join(tmp, "backup", "nested")
+      sm.StorageClient().sync_file(src, dest)
+      self.assertEqual(os.listdir(dest), ["proof_graph.json"])
+      with open(os.path.join(dest, "proof_graph.json")) as f:
+        self.assertEqual(f.read(), '{"nodes": {}}')
+
+  def test_backup_dir_no_longer_refused_at_construction(self):
+    with tempfile.TemporaryDirectory() as tmp:
+      mgr = sm.ProofGraphStateManager(
+          filepath=os.path.join(tmp, "proof_graph.json"),
+          root_dir=tmp,
+          backup_dir=os.path.join(tmp, "bk"),
+      )
+      self.assertEqual(mgr.backup_dir, os.path.join(tmp, "bk"))
+
+
 if __name__ == "__main__":
   absltest.main()

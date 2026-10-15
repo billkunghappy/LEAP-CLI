@@ -41,6 +41,7 @@ import fcntl
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -121,8 +122,8 @@ try:
   _ROOT_DIR = _def_flag(
       "root_dir", flags.DEFINE_string, None, "Problem root directory for node workspaces and logs."
   )
-  _CNS_RUN_DIR = _def_flag(
-      "cns_run_dir", flags.DEFINE_string, None, "Optional CNS directory for atomic synchronization."
+  _BACKUP_DIR = _def_flag(
+      "backup_dir", flags.DEFINE_string, None, "Optional directory to mirror state into after every commit."
   )
   _ROOT_ID = _def_flag(
       "root_id", flags.DEFINE_string, None, "Root node ID for DFS traversal and metrics."
@@ -253,9 +254,9 @@ class StateManagerInput(pydantic.BaseModel):
       default=None,
       description="Problem root directory for workspaces and logs.",
   )
-  cns_run_dir: Optional[str] = pydantic.Field(
+  backup_dir: Optional[str] = pydantic.Field(
       default=None,
-      description="CNS run directory for backup synchronization.",
+      description="Directory to mirror state into after every commit.",
   )
   root_id: Optional[str] = pydantic.Field(
       default=None,
@@ -369,71 +370,33 @@ class VerificationOutcome(pydantic.BaseModel):
 
 
 class StorageClient:
-  """Publishes state snapshots to a durable store outside the run directory.
+  """Mirrors state snapshots into a backup directory on the local filesystem.
 
-  Not implemented. The harness this was extracted from mirrored each commit to
-  a Google distributed filesystem by shelling out to an internal `fileutil`
-  binary, which does not exist anywhere else. Rather than drop the seam, it
-  raises -- a backup subsystem that quietly does nothing is worse than none,
-  because the run looks protected and is not.
-
-  Nothing in a proof run depends on this. It only engages when `--cns_run_dir`
-  is passed; leave it unset and the harness is fully functional, keeping state
-  in the local run directory.
-
-  To implement, override `sync_file` (the only method the state manager calls)
-  and pass an instance as `ProofGraphStateManager(storage_client=...)`. The
-  contract:
+  Engaged only when `--backup_dir` is passed. Point it at a synced folder
+  (a network mount, Dropbox, a bucket mounted with gcsfuse/s3fs) to watch a run
+  from another machine. To publish somewhere else, subclass and override
+  `sync_file`, then pass an instance as
+  `ProofGraphStateManager(storage_client=...)`.
 
     sync_file(src_path, dest_dir)
       Publish the local file `src_path` into `dest_dir` under its basename.
-
-      Must be ATOMIC as observed by a concurrent reader: readers poll these
-      files while workers commit, so a half-written `proof_graph.json` must
-      never be visible under its final name. The original achieved this by
-      copying to `{dest_dir}/{basename}.tmp_{pid}_{tid}` and then renaming
-      onto the final path -- the pid/tid suffix is what keeps two workers
-      publishing at once from colliding on the same temp name.
-
-      Must create `dest_dir` if absent.
-
-      Raising is fine; `sync_to_cns` reports the failure and the run continues
-      on local state.
+      Must be ATOMIC as observed by a concurrent reader -- a half-written
+      `proof_graph.json` must never be visible under its final name -- and must
+      create `dest_dir` if absent. Raising is fine; `sync_backup` reports the
+      failure and the run continues on local state.
 
   Called after every committed mutation with, in order: the state JSON, the
   rendered SVG if one exists, and the assembled `_current_proof.lean`.
   """
 
-  #: Present so a partial implementation can reuse the original decomposition;
-  #: `sync_file` is the only entry point the state manager uses.
-  def mkdir(self, path: str, parents: bool = True) -> None:
-    """Creates a directory in the durable store."""
-    raise NotImplementedError(self._unimplemented("mkdir", path))
-
-  def copy(self, src: str, dest: str, force: bool = True) -> None:
-    """Copies a file within the durable store."""
-    raise NotImplementedError(self._unimplemented("copy", f"{src} -> {dest}"))
-
-  def move(self, src: str, dest: str, force: bool = True) -> None:
-    """Moves a file within the durable store."""
-    raise NotImplementedError(self._unimplemented("move", f"{src} -> {dest}"))
-
   def sync_file(self, src_path: str, dest_dir: str) -> None:
-    """Atomically publishes a local file into `dest_dir`."""
-    raise NotImplementedError(
-        self._unimplemented("sync_file", f"{src_path} -> {dest_dir}")
-    )
-
-  @staticmethod
-  def _unimplemented(operation: str, detail: str) -> str:
-    return (
-        f"StorageClient.{operation}({detail}) is not implemented. This release"
-        " ships no durable backup backend -- the original shelled out to a"
-        " Google-internal `fileutil` binary. Either drop --cns_run_dir to run"
-        " on local state only, or subclass StorageClient and pass it as"
-        " ProofGraphStateManager(storage_client=...). The atomicity contract a"
-        " replacement must honour is in the StorageClient docstring."
-    )
+    """Atomically copies a local file into `dest_dir`."""
+    os.makedirs(dest_dir, exist_ok=True)
+    dest = os.path.join(dest_dir, os.path.basename(src_path))
+    # The pid/tid suffix keeps two workers publishing at once from colliding.
+    tmp = f"{dest}.tmp_{os.getpid()}_{threading.get_ident()}"
+    shutil.copyfile(src_path, tmp)
+    os.replace(tmp, dest)
 
 
 class RecordMessages:
@@ -1255,7 +1218,7 @@ class ProofGraphStateManager:
       self,
       filepath: str,
       root_dir: Optional[str] = None,
-      cns_run_dir: Optional[str] = None,
+      backup_dir: Optional[str] = None,
       root_id: Optional[str] = None,
       storage_client: Optional[StorageClient] = None,
   ):
@@ -1264,7 +1227,7 @@ class ProofGraphStateManager:
     Args:
       filepath: Path to local proof_graph.json state file.
       root_dir: Optional problem root directory for workspaces.
-      cns_run_dir: Optional CNS directory for atomic backup sync.
+      backup_dir: Optional directory to mirror state into after every commit.
       root_id: Optional root theorem node ID.
       storage_client: Optional dedicated storage client for filesystem sync.
     """
@@ -1276,23 +1239,10 @@ class ProofGraphStateManager:
     )
     self.workspace_mgr = workspace_manager.WorkspaceManager(self.root_dir)
     self.nodes_dir: str = os.path.join(self.root_dir, "nodes") if self.root_dir else ""
-    self.cns_run_dir = cns_run_dir
+    self.backup_dir = backup_dir
     self.root_id = root_id
     self.storage_client = storage_client or StorageClient()
 
-    # Refuse at construction rather than on every commit. `sync_to_cns` logs
-    # and swallows its failures so a flaky backend cannot stall a proof, which
-    # means an unimplemented one would otherwise read as "backups are on" for
-    # the whole run while nothing was ever written.
-    if self.cns_run_dir and type(self.storage_client) is StorageClient:  # pylint: disable=unidiomatic-typecheck
-      raise NotImplementedError(
-          f"cns_run_dir={self.cns_run_dir!r} asks for state to be mirrored to a"
-          " durable store, but this release ships no backup backend -- the"
-          " original shelled out to a Google-internal `fileutil` binary. Drop"
-          " cns_run_dir to run on local state only, or subclass StorageClient"
-          " and pass it as ProofGraphStateManager(storage_client=...). The"
-          " atomicity contract is documented on StorageClient."
-      )
 
   def _clear_claim_metadata(self, node: dag.ProofGraphNode) -> None:
     """Clears claim-related search metadata on a node."""
@@ -1395,10 +1345,10 @@ class ProofGraphStateManager:
       else:
         graph = dag.ProofGraph.model_validate_json(content)
 
-      if not self.cns_run_dir and "cns_run_dir" in graph.graph_metadata:
-        self.cns_run_dir = graph.graph_metadata["cns_run_dir"]
-      elif self.cns_run_dir:
-        graph.graph_metadata["cns_run_dir"] = self.cns_run_dir
+      if not self.backup_dir and "backup_dir" in graph.graph_metadata:
+        self.backup_dir = graph.graph_metadata["backup_dir"]
+      elif self.backup_dir:
+        graph.graph_metadata["backup_dir"] = self.backup_dir
 
       yield graph
 
@@ -1437,8 +1387,7 @@ class ProofGraphStateManager:
       self._write_graph_atomic(graph)
       committed = graph
 
-    # Plotting shells out to `dot` and the CNS sync makes several `fileutil`
-    # round trips. Neither needs the lock, and holding it across them serialized
+    # Plotting shells out to `dot` and the backup sync copies several files. Neither needs the lock, and holding it across them serialized
     # every other worker behind bookkeeping.
     try:
       self.generate_plot(committed)
@@ -1446,8 +1395,8 @@ class ProofGraphStateManager:
       if logging is not None:
         logging.warning("Failed to generate plot: %s", e_plot)
 
-    if self.cns_run_dir:
-      self.sync_to_cns(committed)
+    if self.backup_dir:
+      self.sync_backup(committed)
 
   def initialize_graph(self, initial_graph: dag.ProofGraph) -> bool:
     """Atomically initializes the state file with the initial graph."""
@@ -2759,16 +2708,16 @@ class ProofGraphStateManager:
         logging.warning("Failed to generate plot: %s", e)
     return None
 
-  def sync_to_cns(self, graph: Optional[dag.ProofGraph] = None):
-    """Syncs state file atomically to CNS path if configured."""
-    if not self.cns_run_dir:
+  def sync_backup(self, graph: Optional[dag.ProofGraph] = None):
+    """Mirrors the state file into the backup directory, if configured."""
+    if not self.backup_dir:
       return
     try:
-      self.storage_client.sync_file(self.filepath, self.cns_run_dir)
+      self.storage_client.sync_file(self.filepath, self.backup_dir)
 
       svg_path = self.filepath.replace(".json", ".svg")
       if os.path.exists(svg_path):
-        self.storage_client.sync_file(svg_path, self.cns_run_dir)
+        self.storage_client.sync_file(svg_path, self.backup_dir)
 
       target_graph = graph or self.read_graph()
       root = self.root_id or (
@@ -2782,15 +2731,15 @@ class ProofGraphStateManager:
           lean_path = self.filepath.replace(".json", "_current_proof.lean")
           with open(lean_path, "w") as f:
             f.write(final_content)
-          self.storage_client.sync_file(lean_path, self.cns_run_dir)
+          self.storage_client.sync_file(lean_path, self.backup_dir)
         except Exception as e_lean:  # pylint: disable=broad-except
           if logging is not None:
             logging.warning("Failed to sync current_proof.lean: %s", e_lean)
     except Exception as e:  # pylint: disable=broad-except
       if logging is not None:
-        logging.error("Failed to sync to CNS: %s", e)
+        logging.error("Failed to sync backup: %s", e)
       else:
-        print(f"Failed to sync to CNS: {e}")
+        print(f"Failed to sync backup: {e}")
 
   def get_node_context(self, node_id: str) -> Optional[Dict[str, Any]]:
     """Retrieves full proof/decomposition context for an assigned subgoal."""
@@ -3111,14 +3060,14 @@ def _handle_inspect(
 def _handle_sync(
     mgr: ProofGraphStateManager, input_data: StateManagerInput
 ) -> StateManagerOutput:
-  """Handles syncing the state file to CNS."""
+  """Handles mirroring the state file to the backup directory."""
   action = input_data.action
   graph = mgr.read_graph()
-  mgr.sync_to_cns(graph)
+  mgr.sync_backup(graph)
   return StateManagerOutput(
       success=True,
       action=action,
-      message=f"Synced state file to CNS: {input_data.cns_run_dir}",
+      message=f"Synced state file to {input_data.backup_dir}",
   )
 
 
@@ -3450,7 +3399,7 @@ def run_state_manager(input_data: StateManagerInput) -> StateManagerOutput:
   mgr = ProofGraphStateManager(
       filepath=filepath,
       root_dir=root_dir,
-      cns_run_dir=input_data.cns_run_dir,
+      backup_dir=input_data.backup_dir,
       root_id=input_data.root_id,
   )
 
@@ -3481,7 +3430,7 @@ def main(argv: List[str]) -> None:
         filepath=_FILEPATH.value,
         code_file=_CODE_FILE.value,
         root_dir=_ROOT_DIR.value,
-        cns_run_dir=_CNS_RUN_DIR.value,
+        backup_dir=_BACKUP_DIR.value,
         root_id=_ROOT_ID.value,
         node_id=_NODE_ID.value,
         parent_id=_PARENT_ID.value,
@@ -3496,7 +3445,7 @@ def main(argv: List[str]) -> None:
     parser.add_argument("--filepath", type=str, default="")
     parser.add_argument("--code_file", type=str, default=None)
     parser.add_argument("--root_dir", type=str, default=None)
-    parser.add_argument("--cns_run_dir", type=str, default=None)
+    parser.add_argument("--backup_dir", type=str, default=None)
     parser.add_argument("--root_id", type=str, default=None)
     parser.add_argument("--node_id", type=str, default=None)
     parser.add_argument("--parent_id", type=str, default=None)
@@ -3515,7 +3464,7 @@ def main(argv: List[str]) -> None:
         filepath=args.filepath,
         code_file=args.code_file,
         root_dir=args.root_dir,
-        cns_run_dir=args.cns_run_dir,
+        backup_dir=args.backup_dir,
         root_id=args.root_id,
         node_id=args.node_id,
         parent_id=args.parent_id,
