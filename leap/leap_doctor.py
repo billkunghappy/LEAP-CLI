@@ -1,7 +1,7 @@
 """Checks that a machine is ready to run LEAP, and says what to fix if not.
 
-  leap_doctor            # all checks, live verifier + search calls included
-  leap_doctor --offline  # skip the network / Lean calls
+  leap doctor            # all checks, live verifier + search calls included
+  leap doctor --offline  # skip the network / Lean calls
 
 Exit status is 0 when every required check passes.
 """
@@ -34,7 +34,7 @@ def main(argv) -> int:
     import pydantic  # pylint: disable=g-import-not-at-top
     _line(OK, "pydantic", pydantic.VERSION)
   except ImportError:
-    _line(FAIL, "pydantic", "pip install -r requirements.txt")
+    _line(FAIL, "pydantic", "reinstall LEAP: pipx install leap-cli")
     return 1
 
   # Binaries on PATH
@@ -43,7 +43,7 @@ def main(argv) -> int:
     if path:
       _line(OK, b, path)
     else:
-      _line(FAIL, b, "not on PATH: export PATH=\"<leap-cli>/bin:$PATH\"")
+      _line(FAIL, b, "not on PATH -- install with pipx/uv, or activate your venv")
       failed = True
 
   if shutil.which("dot"):
@@ -59,12 +59,14 @@ def main(argv) -> int:
   except ValueError as e:
     _line(FAIL, "verifier backend", str(e))
     return 1
+  import config  # pylint: disable=g-import-not-at-top
+  _line(OK, "settings", config.config_path())
   if backend == "kimina":
     _line(OK, "verifier backend", f"kimina at {url}")
   elif backend == "local":
     project = os.environ.get("LEAN_PROJECT_DIR", "")
     lake = shutil.which("lake")
-    _line(OK if lake else FAIL, "lake", lake or "install Lean via elan")
+    _line(OK if lake else FAIL, "lake", lake or "run `leap lean`")
     has_lakefile = any(os.path.exists(os.path.join(project, f))
                        for f in ("lakefile.lean", "lakefile.toml"))
     _line(OK if has_lakefile else FAIL, "LEAN_PROJECT_DIR", project
@@ -72,8 +74,7 @@ def main(argv) -> int:
     failed |= not (lake and has_lakefile)
   else:
     _line(FAIL, "verifier backend",
-          "set LEAN_PROJECT_DIR (local Lean + Mathlib) or LEAN_VERIFIER_URL"
-          " (kimina-lean-server)")
+          "none configured -- run `leap lean` (or `leap lean --kimina URL`)")
     failed = True
 
   if args.offline:

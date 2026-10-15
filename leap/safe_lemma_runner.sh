@@ -12,12 +12,9 @@
 #   LEAP_RESUME_PREFIX text prepended to the resume prompt, e.g. '$leap-prove '
 #                    so Codex re-loads the orchestrator skill on restart.
 #
-# Examples:
-#   LEAP_AGENT_CLI=claude LEAP_TARGET_DIR=runs/p1 <leap-cli>/scripts/safe_lemma_runner.sh \
-#       --agent orchestrator-lemma -p "Prove problems/p1.lean; problem root: runs/p1"
-#   LEAP_AGENT_CLI=codex LEAP_RESUME_FLAG= LEAP_RESUME_PREFIX='$leap-prove ' \
-#       LEAP_TARGET_DIR=runs/p1 \
-#       <leap-cli>/scripts/safe_lemma_runner.sh exec "\$leap-prove Prove problems/p1.lean; problem root: runs/p1"
+# Usually started through `leap loop`, which sets these for you:
+#   leap loop claude --agent orchestrator-lemma -p "Prove problems/foo.lean"
+#   leap loop codex exec "$leap-prove Prove problems/foo.lean"
 # ==============================================================================
 set -u
 HERE="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
@@ -53,6 +50,9 @@ if [[ -z "${TARGET_DIR}" ]]; then
   for arg in "$@"; do
     if [[ "${arg}" =~ problem\ root:\ ([^[:space:]\"]+) ]]; then
       TARGET_DIR="${BASH_REMATCH[1]}"
+    elif [[ -z "${TARGET_DIR}" && "${arg}" =~ ([^[:space:]\"]+)\.lean ]]; then
+      # Default problem root, matching the orchestrator: runs/<file stem>.
+      TARGET_DIR="runs/$(basename "${BASH_REMATCH[1]}")"
     fi
   done
 fi
@@ -65,7 +65,7 @@ while true; do
     if [[ -n "${TARGET_DIR}" ]]; then
       echo "[$(date)] Releasing stranded claims in ${TARGET_DIR} via release_all..."
       state_manager_bin --root_dir="${TARGET_DIR}" --action=release_all \
-        || "${LEAP_PYTHON:-python3}" "${HERE}/../leap/state_manager.py" \
+        || "${LEAP_PYTHON:-python3}" "${HERE}/state_manager.py" \
              --root_dir="${TARGET_DIR}" --action=release_all || true
     fi
 

@@ -162,16 +162,16 @@ Each agent is one Markdown file in `agents/`: frontmatter plus the agent's
 full operating protocol (directive, invariants and workflow, in one body).
 The frontmatter is host-neutral -- `tools` lists *capabilities* (`shell`,
 `read`, `write`, `edit`, `list`, `web`, `subagents`, `tasks`), not one CLI's
-tool names -- and `install.py --host <claude|codex|antigravity>` renders it
+tool names -- and `leap init <claude|codex|antigravity>` renders it
 into the layout and tool names that host reads, appending a short "Host
-notes" section on dispatch and shell timeouts. See the README for the layouts.
+notes" section on dispatch and shell timeouts. See [configuration.md](configuration.md) for the layouts.
 
 The Strict Command Policy in each directive -- which binaries the shell may
 invoke -- is the constraint that actually matters; the host tool allow-list is
 a second line of defence.
 
 The blocks below summarise each agent's contract. They are a reading aid, not
-the file format; the source of truth is `agents/<name>.md`.
+the file format; the source of truth is `leap/agents/<name>.md`.
 
 ### 2.1. `orchestrator_lemma`
 

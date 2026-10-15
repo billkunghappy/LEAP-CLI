@@ -7,9 +7,9 @@ CLI's tool names. This script renders them into the layout each host reads,
 and appends a short "Host notes" section saying how dispatch, timeouts and
 tool names work there.
 
-  python3 install.py --host claude      --dest ~/leap-runs
-  python3 install.py --host codex       --dest ~/leap-runs
-  python3 install.py --host antigravity --dest ~/leap-runs
+  leap init claude        # (wraps install_claude, into the current directory)
+  leap init codex
+  leap init antigravity
 
 Layouts written under --dest:
 
@@ -34,7 +34,6 @@ from typing import Dict, List, Tuple
 HERE = os.path.dirname(os.path.abspath(__file__))
 AGENTS_DIR = os.path.join(HERE, "agents")
 SKILLS_DIR = os.path.join(HERE, "skills")
-BIN_DIR = os.path.join(HERE, "bin")
 
 ORCHESTRATOR = "orchestrator_lemma"
 SMOKE_TEST = "leap_smoke_test"
@@ -321,33 +320,13 @@ INSTALLERS = {
     "antigravity": install_antigravity,
 }
 
-_NEXT_STEPS = {
-    "claude": "cd {dest} && claude --agent orchestrator-lemma "
-              "\"Prove the theorem in <problem.lean>; problem root: runs/<name>\"",
-    "codex": "cd {dest} && codex \"$leap-prove Prove the theorem in "
-             "<problem.lean>; problem root: runs/<name>\"",
-    "antigravity": "open {dest} in Antigravity, pick orchestrator_lemma as the "
-                   "agent, and ask it to prove <problem.lean> with problem root "
-                   "runs/<name>",
-}
-
-
 def main(argv: List[str]) -> int:
   parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
   parser.add_argument("--host", required=True, choices=sorted(INSTALLERS))
   parser.add_argument("--dest", default=".",
                       help="Workspace to install into (default: current dir).")
   args = parser.parse_args(argv[1:])
-  dest = os.path.abspath(os.path.expanduser(args.dest))
-  print(f"Installing LEAP for {args.host} into {dest}")
-  INSTALLERS[args.host](dest)
-
-  missing = [b for b in LEAP_BINS if shutil.which(b) is None]
-  print("\nDone.")
-  if missing:
-    print(f"\nPut the LEAP binaries on PATH first:\n  export PATH=\"{BIN_DIR}:$PATH\"")
-  print("\nCheck your setup:  leap_doctor")
-  print("Then:              " + _NEXT_STEPS[args.host].format(dest=dest))
+  INSTALLERS[args.host](os.path.abspath(os.path.expanduser(args.dest)))
   return 0
 
 

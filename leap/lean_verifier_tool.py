@@ -485,7 +485,9 @@ def run_lean_verifier(input_data: LeanVerifierInput) -> LeanVerifierOutput:
     code += f"\n#print axioms {input_data.target_name}\n"
 
 
-  verifier_url = (input_data.verifier_url or DEFAULT_VERIFIER_URL).rstrip("/")
+  verifier_url = (input_data.verifier_url
+                  or os.environ.get("LEAN_VERIFIER_URL", DEFAULT_VERIFIER_URL)
+                  ).rstrip("/")
   backend = _resolve_backend(verifier_url)
   if backend == "local":
     res, last_err = _check_local(code, input_data.timeout)

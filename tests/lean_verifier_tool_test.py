@@ -29,6 +29,9 @@ import lean_verifier_tool as lv  # pylint: disable=g-import-not-at-top
 
 
 _LIVE = os.environ.get("LEMMA_LIVE_VERIFIER") == "1"
+if _LIVE:
+  import config  # pylint: disable=g-import-not-at-top
+  config.apply()  # use the verifier `leap lean` saved
 _SKIP_REASON = "Set LEMMA_LIVE_VERIFIER=1 to run against the configured Lean verifier."
 
 # The standard Lean axioms every ordinary classical proof may depend on.

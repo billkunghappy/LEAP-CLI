@@ -5,7 +5,7 @@ Tests live in `tests/`; each file also runs standalone with
 deterministic: the Lean verifier and both search services are stubbed.
 
 ```bash
-pip install -r requirements.txt -r tests/requirements.txt
+pip install -e ".[test]"
 python3 -m unittest discover -s tests -p '*_test.py'
 ```
 
@@ -22,19 +22,18 @@ python3 -m unittest discover -s tests -p '*_test.py'
 | `state_machine_test.py` | Whole-node lifecycles through the phase machine. |
 | `lean_verifier_tool_test.py` | Verifier backends (kimina transport + Bearer auth, local `lake env lean --json` mapping), infra-failure vs. rejection, axiom read-back. |
 | `lean_search_tool_test.py` | leansearch.net request shape, Loogle fallback, per-agent quota. |
-| `install_test.py` | `install.py` renders a complete, parseable layout for every host. |
+| `install_test.py` | `leap init` renders a complete, parseable layout for every host. |
+| `cli_test.py` | The `leap` command: saved settings, `lean --kimina`, `init`, `loop`. |
 
 ## Live verifier tests
 
 `lean_verifier_tool_test.py` also has 8 tests that compile real Lean (e.g. that
 `sorry` compiles but shows up as `sorryAx`, and that wrapped axiom lists are
-parsed). They use whatever verifier you have configured and are skipped unless
+parsed). They use whatever verifier `leap lean` configured and are skipped unless
 `LEMMA_LIVE_VERIFIER=1`:
 
 ```bash
-LEAN_PROJECT_DIR=~/lean/leap-mathlib LEMMA_LIVE_VERIFIER=1 python3 tests/lean_verifier_tool_test.py
-# or
-LEAN_VERIFIER_URL=http://localhost:8000 LEMMA_LIVE_VERIFIER=1 python3 tests/lean_verifier_tool_test.py
+LEMMA_LIVE_VERIFIER=1 python3 tests/lean_verifier_tool_test.py
 ```
 
 Run them once after setting up a verifier: they are what proves the soundness
