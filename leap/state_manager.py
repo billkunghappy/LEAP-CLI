@@ -3,7 +3,8 @@ r"""State manager for centralized, thread-safe and process-safe ProofGraph synch
 This module coordinates centralized proof graph state when multiple worker subagents
 (e.g., formal provers, decomposers, verifiers) work concurrently on different sub-theorems.
 It eliminates racing risks by providing atomic single-step subgoal assignment via DFS
-and dual-locking (in-memory reentrant thread locks + POSIX OS file locks via fcntl).
+and dual-locking (in-memory reentrant thread locks + OS file locks: fcntl on POSIX,
+msvcrt on Windows).
 
 One flag varies. A subagent runs:
 
@@ -37,7 +38,6 @@ Usage:
 
 from contextlib import contextmanager  # pylint: disable=g-importing-member
 import copy
-import fcntl
 import json
 import os
 import re
@@ -49,6 +49,15 @@ import threading
 import time
 from typing import Any, Callable, Dict, Generator, List, Optional, Tuple  # pylint: disable=g-importing-member
 import pydantic
+
+# OS file locking: fcntl on POSIX, msvcrt on Windows (no shared locks there, so
+# every lock is exclusive -- correct, only less concurrent for readers).
+try:
+  import fcntl  # pylint: disable=g-import-not-at-top
+  msvcrt = None
+except ImportError:  # Windows
+  fcntl = None
+  import msvcrt  # pylint: disable=g-import-not-at-top
 
 import actions
 import claim_terminal
@@ -1275,7 +1284,7 @@ class ProofGraphStateManager:
 
   @contextmanager
   def _os_lock(self, exclusive: bool) -> Generator[None, None, None]:
-    """Takes a POSIX lock on a dedicated lock file beside the state file.
+    """Takes an OS lock on a dedicated lock file beside the state file.
 
     The lock deliberately does not live on the state file itself: commits
     replace that file rather than rewriting it, and a lock held on a replaced
@@ -1284,13 +1293,31 @@ class ProofGraphStateManager:
     lock_path = f"{self.filepath}.lock"
     os.makedirs(os.path.dirname(os.path.abspath(lock_path)), exist_ok=True)
     with open(lock_path, "a+", encoding="utf-8") as lock_file:
-      fcntl.flock(
-          lock_file.fileno(), fcntl.LOCK_EX if exclusive else fcntl.LOCK_SH
-      )
-      try:
-        yield
-      finally:
-        fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+      if fcntl is not None:
+        fcntl.flock(
+            lock_file.fileno(), fcntl.LOCK_EX if exclusive else fcntl.LOCK_SH
+        )
+        try:
+          yield
+        finally:
+          fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+      else:
+        # msvcrt locks a byte range from the current position; lock byte 0
+        # (beyond EOF is allowed). LK_NBLCK + retry gives a blocking lock
+        # without LK_LOCK's 10-second give-up.
+        fd = lock_file.fileno()
+        while True:
+          try:
+            os.lseek(fd, 0, os.SEEK_SET)
+            msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
+            break
+          except OSError:
+            time.sleep(0.05)
+        try:
+          yield
+        finally:
+          os.lseek(fd, 0, os.SEEK_SET)
+          msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
 
   def _write_graph_atomic(self, graph: dag.ProofGraph) -> None:
     """Serializes the graph to a temp file, then renames it into place.
@@ -2693,7 +2720,7 @@ class ProofGraphStateManager:
       dot_content = self._generate_dot(graph)
       dot_path = self.filepath.replace(".json", ".dot")
       svg_path = self.filepath.replace(".json", ".svg")
-      with open(dot_path, "w") as f:
+      with open(dot_path, "w", encoding="utf-8") as f:
         f.write(dot_content)
 
       subprocess.run(
@@ -2729,7 +2756,7 @@ class ProofGraphStateManager:
         try:
           final_content = target_graph.assemble_current_proof(root)
           lean_path = self.filepath.replace(".json", "_current_proof.lean")
-          with open(lean_path, "w") as f:
+          with open(lean_path, "w", encoding="utf-8") as f:
             f.write(final_content)
           self.storage_client.sync_file(lean_path, self.backup_dir)
         except Exception as e_lean:  # pylint: disable=broad-except
