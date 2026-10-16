@@ -8,7 +8,7 @@ It is the CLI-agent version of [arXiv:2606.03303](https://arxiv.org/abs/2606.033
 
 ```bash
 pipx install git+https://github.com/billkunghappy/LEAP-CLI   # or: uv tool install / pip install
-leap lean                 # one-time: installs Lean + Mathlib (~5 GB, 10–20 min)
+leap lean                 # one-time: installs Lean v4.34.0 + Mathlib (~11 GB on disk, 10–20 min)
 
 mkdir my-proofs && cd my-proofs
 leap init claude          # or: codex / antigravity
@@ -41,7 +41,7 @@ axioms.
 
 | Command | What it does |
 | :-- | :-- |
-| `leap lean` | Installs [elan](https://github.com/leanprover/elan) if missing, creates a Mathlib project at `~/.leap/leap_lean`, downloads the prebuilt Mathlib cache, and saves the settings. Pass `--project DIR` to use an existing Mathlib project instead. |
+| `leap lean` | Installs [elan](https://github.com/leanprover/elan) if missing, creates a Mathlib project at `~/.leap/leap_lean` pinned to Lean v4.34.0 (Mathlib at its `v4.34.0` tag), downloads the prebuilt Mathlib cache, and saves the settings. It then (after asking) makes `lean` + Mathlib work in any folder: it sets elan's default toolchain and `LEAN_PATH` (in your shell profile, or the user environment on Windows). Pass `--project DIR` to use an existing Mathlib project instead, or `--no-global` to skip the any-folder step. |
 | `leap lean --kimina URL [--api-key K]` | Uses a [kimina-lean-server](https://github.com/project-numina/kimina-lean-server) instead of local Lean. It is faster when many workers run in parallel. |
 | `leap init <cli>` | Installs the agents and skills for `claude`, `codex` or `antigravity` into the current folder. |
 | `leap doctor` | Checks the whole setup, including compiling a probe theorem. |

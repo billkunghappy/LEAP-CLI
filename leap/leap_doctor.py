@@ -72,6 +72,13 @@ def main(argv) -> int:
     _line(OK if has_lakefile else FAIL, "LEAN_PROJECT_DIR", project
           if has_lakefile else f"{project!r} has no lakefile")
     failed |= not (lake and has_lakefile)
+    if has_lakefile:
+      toolchain = config.project_toolchain(project)
+      if toolchain == config.LEAN_TOOLCHAIN:
+        _line(OK, "lean toolchain", toolchain)
+      else:
+        _line(WARN, "lean toolchain", f"{toolchain or 'not pinned'}; LEAP is"
+              f" tested with {config.LEAN_TOOLCHAIN}")
   else:
     _line(FAIL, "verifier backend",
           "none configured -- run `leap lean` (or `leap lean --kimina URL`)")

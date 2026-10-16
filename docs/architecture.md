@@ -827,6 +827,7 @@ the target depends on. Entry point: `leap/lean_verifier_tool.py`. Two backends:
 | `--target_name`  | --                    | Theorem to run `#print axioms` against. Without it you get compilation only, not an axiom audit. |
 | `--timeout`      | `700`                 | Lean compile budget in seconds. |
 | `--verifier_url` | `$LEAN_VERIFIER_URL`  | Override the kimina endpoint. |
+| `--local`        | `false`               | Use the `local` backend (`LEAN_PROJECT_DIR`) regardless of `LEAN_VERIFIER_BACKEND` or any URL. |
 | `--json_output`  | `false`               | Emit the structured result below. |
 
 `--json_output` returns `LeanVerifierOutput`:
