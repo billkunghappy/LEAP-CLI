@@ -3,7 +3,7 @@ requires = ["hatchling>=1.18"]
 build-backend = "hatchling.build"
 [project]
 name = "leap-tools"
-version = "1.0.0"
+version = "0.1.0"
 description = "LEAP CLI tools only: Lean verifier, Mathlib search, proof-graph state manager, plus `leap lean` setup (no agents/skills)"
 requires-python = ">=3.10"
 # absl-py: with absl, state_manager_bin and lean_verifier_tool_bin use absl flag
