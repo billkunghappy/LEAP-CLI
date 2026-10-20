@@ -1,5 +1,5 @@
 [build-system]
-requires = ["hatchling>=1.18"]
+requires = ["hatchling>=1.18,<2"]
 build-backend = "hatchling.build"
 [project]
 name = "leap-tools"
@@ -9,7 +9,9 @@ requires-python = ">=3.10"
 # absl-py: with absl, state_manager_bin and lean_verifier_tool_bin use absl flag
 # parsing (`--json_output=true`, `--nojson_output`, unknown flags rejected).
 # Without it they fall back to argparse, which has a different CLI contract.
-dependencies = ["pydantic>=2", "absl-py"]
+# Upper bounds: tested with pydantic 2.13.5 and absl-py 2.5.1. Next major
+# versions may break the API, so cap them until tested.
+dependencies = ["pydantic>=2,<3", "absl-py>=2,<3"]
 [project.scripts]
 # `leap lean` installs the pinned Lean + Mathlib; `init`/`loop` are absent here.
 leap = "leap.cli:main"
