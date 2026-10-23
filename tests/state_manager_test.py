@@ -6,6 +6,7 @@ The Lean verifier is stubbed, so these run offline and deterministically.
 import _path  # noqa: F401  (puts leap/ on sys.path)
 import os
 import re
+import shlex
 import tempfile
 import threading
 import time
@@ -1363,6 +1364,91 @@ class PruneOnCommitTest(ManagerTestCase):
     self.assertIn("root", self.load().nodes)
 
 
+class InitGraphRootTest(ManagerTestCase):
+  """init_graph must root the graph at `theorem <root_id>` and nothing else.
+
+  Lean is stubbed out: what is under test is which declaration gets picked.
+  """
+
+  def init(self, root_id, body):
+    with mock.patch.object(
+        sm.graph_init_guard, "check_root_compiles", return_value=""
+    ):
+      return sm.run_state_manager(
+          sm.StateManagerInput(
+              action="init_graph",
+              filepath=self.filepath,
+              root_dir=self.root,
+              root_id=root_id,
+              statement="import Mathlib\n\n" + body,
+          )
+      )
+
+  def root_statement(self, root_id):
+    return self.load().nodes[root_id].informal_problem.statement
+
+  def test_a_longer_name_declared_first_is_not_the_root(self):
+    """`\\b` used to stop inside each of these, rooting the graph at it."""
+    for decoy in ("foo'", "foo!", "foo?", "foo₁", "fooₐ", "fooα", "foo℘",
+                  "foo᾽", "foo.bar", "foo_bar", "foo2"):
+      with self.subTest(decoy=decoy):
+        if os.path.exists(self.filepath):
+          os.remove(self.filepath)
+        out = self.init(
+            "foo",
+            f"theorem {decoy} : 1 = 2 := sorry\n\n"
+            "theorem foo : 1 = 1 := by\n  sorry\n",
+        )
+        self.assertTrue(out.success, out.error_message)
+        self.assertEqual(self.root_statement("foo"), "theorem foo : 1 = 1")
+        self.assertIn(decoy, self.load().environment.shared_definitions)
+
+  def test_only_a_longer_name_means_not_found(self):
+    out = self.init("foo", "theorem foo' : 1 = 2 := sorry\n")
+    self.assertFalse(out.success)
+    self.assertIn("was not found", out.error_message)
+    self.assertFalse(os.path.exists(self.filepath))
+
+  def test_universe_parameters_follow_the_name(self):
+    out = self.init(
+        "foo", "theorem foo.{u} (α : Sort u) (a : α) : a = a := by\n  sorry\n"
+    )
+    self.assertTrue(out.success, out.error_message)
+    self.assertEqual(
+        self.root_statement("foo"),
+        "theorem foo.{u} (α : Sort u) (a : α) : a = a",
+    )
+
+  def test_a_commented_out_declaration_is_not_the_root(self):
+    out = self.init(
+        "foo",
+        "/- old version\ntheorem foo : 1 = 2 := sorry\n-/\n\n"
+        "/-- Docstring.\ntheorem foo : 2 = 3 -/\n"
+        "theorem foo : 1 = 1 := by\n  sorry\n",
+    )
+    self.assertTrue(out.success, out.error_message)
+    self.assertEqual(self.root_statement("foo"), "theorem foo : 1 = 1")
+
+  def test_a_name_declared_twice_is_refused(self):
+    """Two namespaces may each declare `foo`; neither is the obvious root."""
+    out = self.init(
+        "foo",
+        "namespace A\ntheorem foo : 1 = 2 := sorry\nend A\n\n"
+        "theorem foo : 1 = 1 := by\n  sorry\n",
+    )
+    self.assertFalse(out.success)
+    self.assertIn("declared 2 times", out.error_message)
+    self.assertFalse(os.path.exists(self.filepath))
+
+  def test_a_root_name_with_a_prime_is_matched_whole(self):
+    out = self.init(
+        "foo'", "theorem foo'' : 1 = 2 := sorry\n\n"
+        "theorem foo' : 1 = 1 := by\n  sorry\n",
+    )
+    self.assertTrue(out.success, out.error_message)
+    self.assertEqual(self.root_statement("foo'"), "theorem foo' : 1 = 1")
+
+
 class BriefingTest(ManagerTestCase):
   """context.md must state the constraints and only cite files that exist."""
 
@@ -1912,6 +1998,33 @@ class SectionSelectionTest(ManagerTestCase):
       text = self._render(name)
       for action in pipeline.allowed_actions(pipeline.PIPELINE[name]):
         self.assertIn(f"--action={action} --node_id=root", text, name)
+
+  def test_a_submit_command_survives_a_quote_in_the_node_id(self):
+    """`foo'bar` unquoted merged `--node_id` and `--code_file` into one word."""
+    node_id = "foo'bar"
+    graph = dag.ProofGraph()
+    graph.add_node(
+        dag.ProofGraphNode(
+            id=node_id,
+            informal_problem=models.InformalProblem(
+                statement=f"theorem {node_id} : True"
+            ),
+        )
+    )
+    text = sm.workspace_manager.WorkspaceManager(self.root).render_context_md(
+        node_id, graph, pipeline.get_phase("formal")
+    )
+    commands = [
+        line for line in text.splitlines()
+        if line.startswith("timeout 900s state_manager_bin ")
+    ]
+    self.assertNotEmpty(commands)
+    for command in commands:
+      args = shlex.split(command)
+      self.assertIn(f"--node_id={node_id}", args, command)
+      code_files = [a for a in args if a.startswith("--code_file=")]
+      for code_file in code_files:
+        self.assertIn(os.path.join("nodes", node_id), code_file)
 
   def test_predicate_names_never_reach_a_briefing(self):
     """Scheduler vocabulary an agent cannot cause must not be advertised."""

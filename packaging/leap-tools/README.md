@@ -11,16 +11,16 @@ A pip package with only the three CLI tools the LEAP agents call, plus the
 | `lean_search_tool_bin` | `leap/lean_search_tool.py` (leansearch.net / Loogle) |
 
 ```bash
-pip install "leap-tools @ git+https://github.com/billkunghappy/LEAP-CLI@0856df72264673b80c3dbdc39364c0fbd66aad87#subdirectory=packaging/leap-tools"
+pip install "leap-tools @ git+https://github.com/billkunghappy/LEAP-CLI@660ed1974a387f7e9abfb7148adce80dc042459b#subdirectory=packaging/leap-tools"
 leap lean      # one-time: Lean v4.34.0 + matching Mathlib (~11 GB on disk, 10–20 min)
 leap doctor    # optional: check the setup end to end
 ```
 
-The install is pinned to commit `0856df7` (`0856df72264673b80c3dbdc39364c0fbd66aad87`,
-main on 2026-10-20, leap-tools 0.1.0 with dependency upper bounds), so later pushes to the repository do not
+The install is pinned to commit `660ed19` (`660ed1974a387f7e9abfb7148adce80dc042459b`,
+leap-tools 0.1.0 with the init_graph root-name and submit-command quoting fixes), so later pushes to the repository do not
 change what this command installs. A full commit SHA cannot be moved the way a
 branch or tag can. To upgrade, review the changes and replace the SHA:
-`git log 0856df7..origin/main -- leap packaging/leap-tools`.
+`git log 660ed19..origin/main -- leap packaging/leap-tools`.
 
 A wheel cannot run code at install time, so Lean comes from `leap lean`, not
 from `pip install`. It installs elan if missing, then creates

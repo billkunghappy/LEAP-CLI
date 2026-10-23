@@ -6,6 +6,7 @@ generation, and mathematical context markdown rendering.
 
 import json
 import os
+import shlex
 import time
 from typing import Any, Dict, List, Optional
 
@@ -1123,7 +1124,9 @@ create, edit and delete.
         # Absolute, not `nodes/<id>/<scaffold>`: a relative path resolves
         # against whatever directory the agent's shell happens to be in, and
         # nothing guarantees that is the problem root.
-        argument = f"--code_file={self.get_scaffold_path(node_id, phase.scaffold)}"
+        argument = shlex.quote(
+            f"--code_file={self.get_scaffold_path(node_id, phase.scaffold)}"
+        )
         note = (
             f"Fill in `{scaffold}` first. You do not say what it turned out to"
             " be -- the file and the Lean kernel decide that."
@@ -1135,12 +1138,18 @@ create, edit and delete.
             " inherits. A one-word reason is treated as no reason and the"
             " command is refused."
         )
+      # Quoted: a Lean name may contain `'` (`foo'bar`), and unquoted the
+      # quotes pair up across arguments -- `--node_id` and `--code_file` merge
+      # into one, and the shell says nothing. Plain names come out unchanged.
       lines.extend([
           f"**`--action={action}`** — {pipeline.action_guidance(phase, action)}",
           "",
           "```",
-          f"timeout 900s state_manager_bin --root_dir={self.root_dir}"
-          f" --action={action} --node_id={node_id} {argument}",
+          "timeout 900s state_manager_bin "
+          + shlex.quote(f"--root_dir={self.root_dir}")
+          + f" --action={action} "
+          + shlex.quote(f"--node_id={node_id}")
+          + f" {argument}",
           "```",
           "",
           note,
