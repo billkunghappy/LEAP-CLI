@@ -3132,6 +3132,15 @@ def _handle_get_context(
   )
 
 
+# One character that continues a Lean identifier (`isIdRest`): `\w` plus the
+# letter-like ranges it misses, such as `℘` and `᾽`. A superset is safe -- the
+# extras cannot follow a declaration name in a file that parses.
+_LEAN_ID_REST = (
+    r"[\w'!?\u0370-\u03ff\u1f00-\u1ffe\u2100-\u214f"
+    r"\U0001d49c-\U0001d59f]"
+)
+
+
 def _handle_init_graph(
     mgr: ProofGraphStateManager, input_data: StateManagerInput
 ) -> StateManagerOutput:
@@ -3162,14 +3171,35 @@ def _handle_init_graph(
     )
   init_graph = dag.ProofGraph()
 
-  # Split benchmark file at root theorem declaration
-  thm_match = re.search(
-      r"^(?:@\[[^\]]*\]\s+)?(?:noncomputable\s+)?(?:theorem|lemma)\s+"
-      + re.escape(root_id)
-      + r"\b",
-      statement,
-      re.MULTILINE,
+  # Split benchmark file at root theorem declaration. The name must end where
+  # Lean's identifier ends: a `\b` there also stops inside `foo'`, `foo₁`,
+  # `foo!` and `foo.bar`, so a file declaring one of those before `foo` was
+  # rooted at it -- and a disproof of it reported as foo's. `.{` is let through
+  # because it opens universe parameters (`theorem foo.{u}`), not a name
+  # component. Searched with comments masked, so a commented-out or docstring
+  # `theorem foo` cannot be picked either.
+  thm_matches = list(
+      re.finditer(
+          r"^(?:@\[[^\]]*\]\s+)?(?:noncomputable\s+)?(?:theorem|lemma)\s+"
+          + re.escape(root_id)
+          + rf"(?!{_LEAN_ID_REST}|\.(?!\{{))",
+          models.mask_lean_comments(statement),
+          re.MULTILINE,
+      )
   )
+  if len(thm_matches) > 1:
+    # Legal Lean when the copies sit in different namespaces, but then nothing
+    # here can tell which one the problem means.
+    return StateManagerOutput(
+        success=False,
+        action=action,
+        error_message=(
+            f"Root theorem name '{root_id}' is declared"
+            f" {len(thm_matches)} times in the statement content, so the"
+            " root is ambiguous. Rename all but one and re-run init_graph."
+        ),
+    )
+  thm_match = thm_matches[0] if thm_matches else None
   if not thm_match:
     return StateManagerOutput(
         success=False,
