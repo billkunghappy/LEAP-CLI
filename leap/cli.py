@@ -2,7 +2,8 @@
 
   leap lean                 one-time: install Lean (elan) + a Mathlib project,
                             pinned to config.LEAN_VERSION, usable from any folder
-  leap lean --kimina URL    ...or use a kimina-lean-server instead
+  leap lean --kimina URL    ...or a kimina-lean-server, used while it answers
+                            (local Lean otherwise)
   leap init claude          put the agents + skills into the current directory
   leap doctor               check everything is wired up
   leap loop claude ...      keep an agent CLI running until the proof is done
@@ -88,7 +89,13 @@ def _confirm(question: str, assume_yes: bool) -> bool:
     return False
 
 
-def _probe() -> bool:
+def _probe(expect_backend: str = "") -> bool:
+  """Compiles a probe theorem; with `expect_backend`, that backend must answer.
+
+  The verifier falls back from a URL to local Lean, so a `--kimina` setup is
+  checked with `expect_backend="kimina"`: a local answer would hide a URL that
+  does not work.
+  """
   import lean_verifier_tool as lv  # pylint: disable=g-import-not-at-top
   _say("Checking the verifier with a probe theorem...")
   try:
@@ -97,6 +104,11 @@ def _probe() -> bool:
         target_name="leap_probe", timeout=900))
   except (NotImplementedError, ValueError) as e:
     print(f"    failed: {e}")
+    return False
+  if expect_backend and out.backend != expect_backend:
+    print(f"    failed: the {expect_backend} verifier gave no verdict"
+          f" ({out.remote_error or out.error_message}); local Lean is used"
+          " while it does not answer")
     return False
   if out.is_valid and out.used_axioms is not None:
     print(f"    ok -- compiled, axioms {out.used_axioms}")
@@ -262,7 +274,7 @@ def cmd_lean(args) -> int:
     if args.api_key:
       os.environ["LEAN_VERIFIER_API_KEY"] = args.api_key
     _say(f"Saved kimina settings to {path}")
-    return 0 if _probe() else 1
+    return 0 if _probe(expect_backend="kimina") else 1
 
   # 1. elan / lake
   lake = shutil.which("lake")
@@ -313,8 +325,10 @@ def cmd_lean(args) -> int:
   _say("Building")
   _run([lake, "build"], cwd=project)
 
+  # Local Lean is the default, so no backend is saved: a URL the user sets
+  # later is then tried first, and this project stays the fallback.
   path = config.save({
-      "LEAN_VERIFIER_BACKEND": "local",
+      "LEAN_VERIFIER_BACKEND": "",
       "LEAN_PROJECT_DIR": project,
       "LEAN_VERIFIER_URL": "",
       "LEAN_VERIFIER_API_KEY": "",
@@ -348,7 +362,9 @@ def cmd_init(args) -> int:
   os.makedirs(os.path.join(dest, "problems"), exist_ok=True)
 
   config.apply()
-  if not (os.environ.get("LEAN_PROJECT_DIR") or os.environ.get("LEAN_VERIFIER_URL")):
+  import lean_verifier_tool as lv  # pylint: disable=g-import-not-at-top
+  if not (lv._local_project()  # pylint: disable=protected-access
+          or os.environ.get("LEAN_VERIFIER_URL")):
     print("\nNo Lean verifier configured yet -- run `leap lean` once.")
   missing = [b for b in install.LEAP_BINS if shutil.which(b) is None]
   if missing:
@@ -403,7 +419,7 @@ def main(argv: Optional[List[str]] = None) -> int:
       "lean", help=f"one-time Lean {config.LEAN_VERSION} + Mathlib setup")
   p.add_argument("--project", help="use an existing Lake project with Mathlib")
   p.add_argument("--kimina", metavar="URL",
-                 help="use a kimina-lean-server instead of local Lean")
+                 help="use a kimina-lean-server while it answers (local Lean otherwise)")
   p.add_argument("--api-key", help="kimina API key (LEAN_SERVER_API_KEY)")
   p.add_argument("--no-global", action="store_true",
                  help="don't set elan's default toolchain and LEAN_PATH, so"

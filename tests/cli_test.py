@@ -62,7 +62,7 @@ class LeanKiminaTest(_Home):
         contextlib.redirect_stdout(io.StringIO()):
       rc = cli.main(["lean", "--kimina", "http://h:8000/", "--api-key", "abc"])
     self.assertEqual(rc, 0)
-    probe.assert_called_once()
+    probe.assert_called_once_with(expect_backend="kimina")
     with open(config.config_path()) as f:
       saved = json.load(f)
     self.assertEqual(saved, {"LEAN_VERIFIER_BACKEND": "kimina",
@@ -85,6 +85,9 @@ class LeanKiminaTest(_Home):
     self.assertEqual([c.args[0][1:] for c in run.call_args_list],
                      [["update"], ["exe", "cache", "get"], ["build"]])
     self.assertEqual(config.load()["LEAN_PROJECT_DIR"], project)
+    # Local Lean is the default, so no backend is saved; a URL set later is
+    # tried first, with this project as the fallback.
+    self.assertNotIn("LEAN_VERIFIER_BACKEND", config.load())
 
   def test_default_project_on_other_toolchain_is_refused(self):
     project = os.path.join(self.tmp.name, "leap_lean")
@@ -188,6 +191,65 @@ class LoopTest(_Home):
     self.assertEqual(env["LEAP_AGENT_CLI"], "codex")
     self.assertEqual(env["LEAP_RESUME_FLAG"], "")
     self.assertEqual(env["LEAP_RESUME_PREFIX"], "$leap-prove ")
+
+
+class ProbeTest(_Home):
+  """`leap lean --kimina` must see the URL answer, not the local fallback."""
+
+  def _probe(self, out, **kw):
+    import lean_verifier_tool as lv  # pylint: disable=g-import-not-at-top
+    with mock.patch.object(lv, "run_lean_verifier", return_value=out), \
+        contextlib.redirect_stdout(io.StringIO()) as printed:
+      ok = cli._probe(**kw)  # pylint: disable=protected-access
+    return ok, printed.getvalue()
+
+  def _out(self, **kw):
+    import lean_verifier_tool as lv  # pylint: disable=g-import-not-at-top
+    return lv.LeanVerifierOutput(is_valid=True, used_axioms=[], **kw)
+
+  def test_kimina_answer_passes(self):
+    ok, _ = self._probe(self._out(backend="kimina"), expect_backend="kimina")
+    self.assertTrue(ok)
+
+  def test_local_fallback_fails_a_kimina_setup(self):
+    ok, printed = self._probe(
+        self._out(backend="local", remote_error="connection refused"),
+        expect_backend="kimina")
+    self.assertFalse(ok)
+    self.assertIn("connection refused", printed)
+
+  def test_local_setup_accepts_local(self):
+    ok, _ = self._probe(self._out(backend="local"))
+    self.assertTrue(ok)
+
+
+class DoctorTest(_Home):
+  """`leap doctor` with local Lean as the default."""
+
+  def _doctor(self, env):
+    import leap_doctor  # pylint: disable=g-import-not-at-top
+    os.environ.update(env)
+    with mock.patch.object(leap_doctor.shutil, "which",
+                           side_effect=lambda b: None if b == "lake" else "/b/" + b), \
+        contextlib.redirect_stdout(io.StringIO()) as printed:
+      rc = leap_doctor.main(["leap doctor", "--offline"])
+    return rc, printed.getvalue()
+
+  def test_nothing_set_fails_on_the_local_setup(self):
+    rc, printed = self._doctor({})
+    self.assertEqual(rc, 1)
+    self.assertIn("[ok  ] verifier backend -- local Lean", printed)
+    self.assertIn("[FAIL] lake", printed)
+    self.assertIn("[FAIL] LEAN_PROJECT_DIR", printed)
+    self.assertIn("leap lean", printed)
+
+  def test_with_a_url_the_local_setup_is_only_a_fallback(self):
+    rc, printed = self._doctor({"LEAN_VERIFIER_URL": "http://h:8000"})
+    self.assertEqual(rc, 0)
+    self.assertIn("kimina at http://h:8000", printed)
+    self.assertIn("[warn] lake", printed)
+    self.assertIn("[warn] LEAN_PROJECT_DIR", printed)
+    self.assertNotIn("[FAIL]", printed)
 
 
 if __name__ == "__main__":

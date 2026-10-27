@@ -42,7 +42,7 @@ axioms.
 | Command | What it does |
 | :-- | :-- |
 | `leap lean` | Installs [elan](https://github.com/leanprover/elan) if missing, creates a Mathlib project at `~/.leap/leap_lean` pinned to Lean v4.34.0 (Mathlib at its `v4.34.0` tag), downloads the prebuilt Mathlib cache, and saves the settings. It then (after asking) makes `lean` + Mathlib work in any folder: it sets elan's default toolchain and `LEAN_PATH` (in your shell profile, or the user environment on Windows). Pass `--project DIR` to use an existing Mathlib project instead, or `--no-global` to skip the any-folder step. |
-| `leap lean --kimina URL [--api-key K]` | Uses a [kimina-lean-server](https://github.com/project-numina/kimina-lean-server) instead of local Lean. It is faster when many workers run in parallel. |
+| `leap lean --kimina URL [--api-key K]` | Uses a [kimina-lean-server](https://github.com/project-numina/kimina-lean-server) while it answers; when it gives no verdict, the check runs on local Lean (`LEAN_PROJECT_DIR`, else `~/.leap/leap_lean`). It is faster when many workers run in parallel. Local Lean is the default whenever no URL is set. |
 | `leap init <cli>` | Installs the agents and skills for `claude`, `codex` or `antigravity` into the current folder. |
 | `leap doctor` | Checks the whole setup, including compiling a probe theorem. |
 | `leap loop <cli> ...` | Reruns a headless CLI until the proof is done, resuming after crashes and rate limits. Example: `leap loop claude --agent orchestrator-lemma -p "Prove problems/amgm2.lean"`. |

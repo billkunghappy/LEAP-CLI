@@ -20,6 +20,7 @@ import _path  # noqa: F401  (puts leap/ on sys.path)
 import contextlib
 import json
 import os
+import tempfile
 import unittest
 from unittest import mock
 
@@ -153,7 +154,10 @@ class InfraFailureTest(absltest.TestCase):
 
   def _run_with_transport(self, side_effect, attempts=2):
     slept = []
-    with mock.patch.object(lv, "_MAX_TRANSPORT_ATTEMPTS", attempts), \
+    # No local project, so a URL that gives no verdict is not covered by the
+    # local fallback (FallbackTest covers that).
+    with mock.patch.object(lv, "_local_project", return_value=""), \
+        mock.patch.object(lv, "_MAX_TRANSPORT_ATTEMPTS", attempts), \
         mock.patch.object(lv.time, "sleep", slept.append), \
         mock.patch.object(lv.urllib.request, "urlopen", side_effect=side_effect):
       out = lv.run_lean_verifier(
@@ -283,7 +287,7 @@ class NamespacedReadbackTest(absltest.TestCase):
 
 
 class BackendSelectionTest(absltest.TestCase):
-  """Which backend runs is decided by config, never guessed silently."""
+  """Local Lean is the default; a set URL is tried first unless backend=local."""
 
   def _resolve(self, env, url=""):
     with mock.patch.dict(os.environ, env, clear=False):
@@ -300,15 +304,27 @@ class BackendSelectionTest(absltest.TestCase):
   def test_project_dir_selects_local(self):
     self.assertEqual(self._resolve({"LEAN_PROJECT_DIR": "/x"}), "local")
 
-  def test_explicit_backend_wins(self):
+  def test_explicit_local_backend_ignores_the_url(self):
     self.assertEqual(
         self._resolve({"LEAN_VERIFIER_BACKEND": "local"}, "http://h"), "local"
     )
 
+  def test_nothing_set_is_local(self):
+    self.assertEqual(self._resolve({}), "local")
+
+  def test_kimina_backend_without_url_is_local(self):
+    self.assertEqual(self._resolve({"LEAN_VERIFIER_BACKEND": "kimina"}), "local")
+
+  def test_unknown_backend_is_refused(self):
+    with self.assertRaises(ValueError):
+      self._resolve({"LEAN_VERIFIER_BACKEND": "remote"})
+
   def test_nothing_configured_raises_not_implemented(self):
-    with mock.patch.dict(os.environ, {}, clear=False):
+    with mock.patch.dict(os.environ, {}, clear=False), \
+        tempfile.TemporaryDirectory() as home:
       for k in ("LEAN_VERIFIER_BACKEND", "LEAN_PROJECT_DIR", "LEAN_VERIFIER_URL"):
         os.environ.pop(k, None)
+      os.environ["LEAP_HOME"] = home  # no leap_lean project in it
       with mock.patch.object(lv, "DEFAULT_VERIFIER_URL", ""), \
           mock.patch.object(lv, "VERIFIER_BACKEND", ""), \
           mock.patch.object(lv, "LEAN_PROJECT_DIR", ""):
@@ -337,9 +353,11 @@ class LocalFlagTest(absltest.TestCase):
     self.assertEqual(run.call_args.args[0][1:4], ["env", "lean", "--json"])
     urlopen.assert_not_called()
 
-  def test_local_without_project_dir_raises(self):
-    with mock.patch.dict(os.environ, {}, clear=False):
+  def test_local_without_any_project_raises(self):
+    with mock.patch.dict(os.environ, {}, clear=False), \
+        tempfile.TemporaryDirectory() as home:
       os.environ.pop("LEAN_PROJECT_DIR", None)
+      os.environ["LEAP_HOME"] = home  # no leap_lean project in it
       with mock.patch.object(lv, "LEAN_PROJECT_DIR", ""):
         with self.assertRaises(NotImplementedError):
           lv.run_lean_verifier(lv.LeanVerifierInput(
@@ -424,6 +442,102 @@ class LocalBackendTest(absltest.TestCase):
                           side_effect=lv.subprocess.TimeoutExpired("lake", 5)):
       out = lv.run_lean_verifier(lv.LeanVerifierInput(code="theorem t : True := trivial"))
     self.assertTrue(out.is_infra_failure)
+
+
+class FallbackTest(absltest.TestCase):
+  """A set URL is used only while it works; otherwise local Lean answers."""
+
+  _OK = b'{"results": [{"response": {"messages": []}}]}'
+
+  def _run(self, env, urlopen, **kw):
+    proc = mock.Mock(stdout="", stderr="", returncode=0)
+    with mock.patch.dict(os.environ, env), \
+        mock.patch.object(lv, "_MAX_TRANSPORT_ATTEMPTS", 1), \
+        mock.patch.object(lv.shutil, "which", return_value="/usr/bin/lake"), \
+        mock.patch.object(lv.subprocess, "run", return_value=proc) as run, \
+        mock.patch.object(lv.urllib.request, "urlopen", urlopen) as opened:
+      for k in ("LEAN_VERIFIER_BACKEND", "LEAN_VERIFIER_URL"):
+        if k not in env:
+          os.environ.pop(k, None)
+      out = lv.run_lean_verifier(
+          lv.LeanVerifierInput(code="theorem t : True := trivial", **kw))
+    return out, run, opened
+
+  def test_no_url_uses_local_lean(self):
+    urlopen = mock.Mock()
+    out, run, _ = self._run({"LEAN_PROJECT_DIR": "/"}, urlopen)
+    self.assertTrue(out.is_valid)
+    self.assertEqual(out.backend, "local")
+    self.assertIsNone(out.remote_error)
+    run.assert_called_once()
+    urlopen.assert_not_called()
+
+  def test_a_working_url_is_used(self):
+    out, run, _ = self._run({"LEAN_PROJECT_DIR": "/"}, _fake_response(self._OK),
+                            verifier_url="http://localhost:9999")
+    self.assertTrue(out.is_valid)
+    self.assertEqual(out.backend, "kimina")
+    run.assert_not_called()
+
+  def test_a_url_from_the_environment_is_used(self):
+    env = {"LEAN_PROJECT_DIR": "/", "LEAN_VERIFIER_URL": "http://localhost:9999"}
+    out, run, _ = self._run(env, _fake_response(self._OK))
+    self.assertEqual(out.backend, "kimina")
+    run.assert_not_called()
+
+  def test_an_unreachable_url_falls_back_to_local_lean(self):
+    down = mock.Mock(side_effect=OSError("connection refused"))
+    out, run, _ = self._run({"LEAN_PROJECT_DIR": "/"}, down,
+                            verifier_url="http://localhost:9999")
+    self.assertTrue(out.is_valid)
+    self.assertFalse(out.is_infra_failure)
+    self.assertEqual(out.backend, "local")
+    self.assertIn("connection refused", out.remote_error)
+    self.assertIn("[VERIFIER NOTE]", out.info_messages)
+    run.assert_called_once()
+
+  def test_an_http_error_falls_back_to_local_lean(self):
+    err = lv.urllib.error.HTTPError("http://x", 403, "Forbidden", {}, None)
+    out, _, _ = self._run({"LEAN_PROJECT_DIR": "/"}, mock.Mock(side_effect=err),
+                          verifier_url="http://localhost:9999")
+    self.assertEqual(out.backend, "local")
+    self.assertIn("403", out.remote_error)
+
+  def test_a_url_rejection_is_a_verdict_not_a_fallback(self):
+    payload = json.dumps({"results": [{"response": {"messages": [
+        {"severity": "error", "data": "unknown identifier 'foo'"}]}}]}).encode()
+    out, run, _ = self._run({"LEAN_PROJECT_DIR": "/"}, _fake_response(payload),
+                            verifier_url="http://localhost:9999")
+    self.assertFalse(out.is_valid)
+    self.assertFalse(out.is_infra_failure)
+    self.assertEqual(out.backend, "kimina")
+    run.assert_not_called()
+
+  def test_url_down_and_no_local_project_is_infra(self):
+    down = mock.Mock(side_effect=OSError("connection refused"))
+    with mock.patch.object(lv, "_local_project", return_value=""):
+      out, run, _ = self._run({}, down, verifier_url="http://localhost:9999")
+    self.assertTrue(out.is_infra_failure)
+    self.assertIn("connection refused", out.error_message)
+    self.assertIn("leap lean", out.error_message)
+    run.assert_not_called()
+
+  def test_backend_local_never_calls_the_url(self):
+    urlopen = mock.Mock()
+    env = {"LEAN_PROJECT_DIR": "/", "LEAN_VERIFIER_BACKEND": "local",
+           "LEAN_VERIFIER_URL": "http://localhost:9999"}
+    out, _, _ = self._run(env, urlopen)
+    self.assertEqual(out.backend, "local")
+    urlopen.assert_not_called()
+
+  def test_default_project_is_the_one_leap_lean_creates(self):
+    with tempfile.TemporaryDirectory() as home, \
+        mock.patch.dict(os.environ, {"LEAP_HOME": home}), \
+        mock.patch.object(lv, "LEAN_PROJECT_DIR", ""):
+      os.environ.pop("LEAN_PROJECT_DIR", None)
+      self.assertEqual(lv._local_project(), "")
+      os.makedirs(os.path.join(home, "leap_lean"))
+      self.assertEqual(lv._local_project(), os.path.join(home, "leap_lean"))
 
 
 if __name__ == "__main__":

@@ -20,10 +20,10 @@ python3 -m unittest discover -s tests -p '*_test.py'
 | `graph_init_guard_test.py` | `init_graph` admission checks (preamble, root gate, root compiles). |
 | `state_manager_test.py` | Claims, submissions, the axiom/soundness gate, optimistic commits, atomic writes, `--backup_dir`. |
 | `state_machine_test.py` | Whole-node lifecycles through the phase machine. |
-| `lean_verifier_tool_test.py` | Verifier backends (kimina transport + Bearer auth, local `lake env lean --json` mapping), infra-failure vs. rejection, axiom read-back. |
+| `lean_verifier_tool_test.py` | Verifier backends (local Lean by default, a set kimina URL while it answers and the fallback when it does not, kimina transport + Bearer auth, local `lake env lean --json` mapping), infra-failure vs. rejection, axiom read-back. |
 | `lean_search_tool_test.py` | leansearch.net request shape, Loogle fallback, per-agent quota. |
 | `install_test.py` | `leap init` renders a complete, parseable layout for every host. |
-| `cli_test.py` | The `leap` command: saved settings, `lean --kimina`, `init`, `loop`. |
+| `cli_test.py` | The `leap` command: saved settings, `lean --kimina` (the probe must reach the URL), `init`, `loop`, `doctor --offline`. |
 
 ## Live verifier tests
 
