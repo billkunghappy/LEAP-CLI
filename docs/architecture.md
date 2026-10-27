@@ -813,12 +813,17 @@ hand-driven entry points for the same machinery.
 #### `lean_verifier_tool_bin`
 
 Compiles Lean 4 and reports whether the kernel accepted it, plus which axioms
-the target depends on. Entry point: `leap/lean_verifier_tool.py`. Two backends:
+the target depends on. Entry point: `leap/lean_verifier_tool.py`. Local Lean
+is the default; a set verifier URL is the only exception, and only while it
+works:
 
-| Backend  | Selected by                                   | What it does |
+| Backend  | Used when                                     | What it does |
 | :------- | :-------------------------------------------- | :----------- |
-| `kimina` | `LEAN_VERIFIER_URL` (or `LEAN_VERIFIER_BACKEND=kimina`) | `POST {url}/api/check` to a [kimina-lean-server](https://github.com/project-numina/kimina-lean-server); `LEAN_VERIFIER_API_KEY` is sent as `Authorization: Bearer`. |
-| `local`  | `LEAN_PROJECT_DIR` (or `LEAN_VERIFIER_BACKEND=local`) | `lake env lean --json <tmpfile>` inside a Lake project that depends on Mathlib. |
+| `local`  | always, unless a set URL answers               | `lake env lean --json <tmpfile>` inside a Lake project that depends on Mathlib: `LEAN_PROJECT_DIR`, else `~/.leap/leap_lean` (what `leap lean` creates). |
+| `kimina` | `LEAN_VERIFIER_URL` / `--verifier_url` is set, `LEAN_VERIFIER_BACKEND` is not `local`, and the URL gives a verdict | `POST {url}/api/check` to a [kimina-lean-server](https://github.com/project-numina/kimina-lean-server); `LEAN_VERIFIER_API_KEY` is sent as `Authorization: Bearer`. When it gives no verdict (unreachable, an HTTP error, an empty reply), the same check runs on local Lean. |
+
+The JSON output's `backend` names who answered, and `remote_error` says why a
+set URL was passed over (the text output adds a `[VERIFIER NOTE]` line).
 
 | Flag             | Default               | Notes |
 | :--------------- | :-------------------- | :---- |
@@ -826,8 +831,8 @@ the target depends on. Entry point: `leap/lean_verifier_tool.py`. Two backends:
 | `--code`         | --                    | The Lean source inline, as an alternative to `--code_file`. |
 | `--target_name`  | --                    | Theorem to run `#print axioms` against. Without it you get compilation only, not an axiom audit. |
 | `--timeout`      | `700`                 | Lean compile budget in seconds. |
-| `--verifier_url` | `$LEAN_VERIFIER_URL`  | Override the kimina endpoint. |
-| `--local`        | `false`               | Use the `local` backend (`LEAN_PROJECT_DIR`) regardless of `LEAN_VERIFIER_BACKEND` or any URL. |
+| `--verifier_url` | `$LEAN_VERIFIER_URL`  | Kimina endpoint to try first; local Lean answers when it gives no verdict. |
+| `--local`        | `false`               | Use only local Lean; never call a URL. |
 | `--json_output`  | `false`               | Emit the structured result below. |
 
 `--json_output` returns `LeanVerifierOutput`:

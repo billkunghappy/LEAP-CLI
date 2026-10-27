@@ -9,9 +9,9 @@ setting can be overridden by an environment variable of the same name. Run
 
 | Variable | Set by | Effect |
 | :--- | :--- | :--- |
-| `LEAN_VERIFIER_BACKEND` | `leap lean` | `local` or `kimina`. If unset, LEAP infers it: a URL means kimina, a project dir means local. |
-| `LEAN_PROJECT_DIR` | `leap lean [--project DIR]` | A Lake project that depends on Mathlib. The local backend runs `lake env lean --json` in it. |
-| `LEAN_VERIFIER_URL` | `leap lean --kimina URL` | Base URL of a kimina-lean-server, which receives `POST {url}/api/check`. |
+| `LEAN_VERIFIER_BACKEND` | `leap lean --kimina` | Usually unset. Local Lean is the default, and a set URL is tried first while it answers; `local` never calls a URL; `kimina` means the same as unset. |
+| `LEAN_PROJECT_DIR` | `leap lean [--project DIR]` | A Lake project that depends on Mathlib. Local Lean runs `lake env lean --json` in it. Unset means `~/.leap/leap_lean` (`$LEAP_HOME/leap_lean`), if it exists. |
+| `LEAN_VERIFIER_URL` | `leap lean --kimina URL` | Base URL of a kimina-lean-server, which receives `POST {url}/api/check`. Used while it gives verdicts; otherwise the check runs on local Lean. |
 | `LEAN_VERIFIER_API_KEY` | `leap lean --api-key K` | Sent as `Authorization: Bearer K`. This matches the server's `LEAN_SERVER_API_KEY`. |
 | `LEAN_VERIFIER_MAX_ATTEMPTS` | — | Transport retries for kimina (default 3). |
 | `LEMMA_MAX_INFRA_RETRIES` | — | How often a node is retried when verification returned no verdict (default 3). |

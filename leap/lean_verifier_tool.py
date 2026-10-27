@@ -4,19 +4,23 @@ Provides a clean, lightweight CLI and Python interface for LEMMA agents
 to verify Lean 4 proofs via kimina-lean-server or a local Lean install. Uses authoritative
 Lean 4 '#print axioms' checking to guarantee mathematical soundness.
 
-Two backends, selected by `LEAN_VERIFIER_BACKEND` (or inferred):
+Two backends:
 
+  local  -- the default: run `lake env lean --json` inside a local Lean project
+            that depends on Mathlib: `LEAN_PROJECT_DIR`, else the project
+            `leap lean` creates (`$LEAP_HOME/leap_lean`, `~/.leap/leap_lean`).
+            No server needed.
   kimina -- POST to a kimina-lean-server (https://github.com/project-numina/
             kimina-lean-server) at `LEAN_VERIFIER_URL` / `--verifier_url`.
             Optional `LEAN_VERIFIER_API_KEY` is sent as `Authorization: Bearer`.
-  local  -- run `lake env lean --json` inside a local Lean project that depends
-            on Mathlib (`LEAN_PROJECT_DIR`). No server needed.
 
-When `LEAN_VERIFIER_BACKEND` is unset, a configured URL selects `kimina` and
-otherwise a configured `LEAN_PROJECT_DIR` selects `local`. Calling it with
-neither configured raises `NotImplementedError` rather than silently reporting
-proofs as unverifiable. A caller can pass `--local` (`local=True` in Python) to
-use the `local` backend regardless of `LEAN_VERIFIER_BACKEND` or any URL.
+Local Lean is used unless the user set a verifier URL and that URL works: with
+a URL set, it is tried first, and when it gives no verdict (unreachable, an HTTP
+error, an empty reply) the same check runs on local Lean, and the output says
+so (`backend`, `remote_error`). `LEAN_VERIFIER_BACKEND=local` or `--local`
+(`local=True` in Python) never calls a URL. With no URL and no local project,
+it raises `NotImplementedError` rather than silently reporting proofs as
+unverifiable.
 
 Usage (Python API):
   import lean_verifier_tool
@@ -70,8 +74,8 @@ try:
   )
   _LOCAL = _def_flag(
       "local", flags.DEFINE_boolean, False,
-      "Use the local backend (LEAN_PROJECT_DIR), ignoring LEAN_VERIFIER_BACKEND"
-      " and any verifier URL."
+      "Use only local Lean (LEAN_PROJECT_DIR or ~/.leap/leap_lean); never call"
+      " a verifier URL."
   )
   _JSON_OUTPUT = _def_flag(
       "json_output", flags.DEFINE_boolean, False, "Whether to print output in JSON format."
@@ -84,7 +88,8 @@ except (ImportError, ModuleNotFoundError):
 
 
 #: Base URL of a kimina-lean-server (or any service speaking
-#: `VERIFIER_WIRE_CONTRACT`). Empty by default.
+#: `VERIFIER_WIRE_CONTRACT`). Empty by default: local Lean is the default, and
+#: a URL is used only when set and answering.
 DEFAULT_VERIFIER_URL = os.environ.get("LEAN_VERIFIER_URL", "")
 
 #: Optional API key for the kimina server (its `LEAN_SERVER_API_KEY`). Sent as
@@ -92,10 +97,12 @@ DEFAULT_VERIFIER_URL = os.environ.get("LEAN_VERIFIER_URL", "")
 VERIFIER_API_KEY = os.environ.get("LEAN_VERIFIER_API_KEY", "")
 
 #: Root of a local Lean 4 project with Mathlib as a dependency (the directory
-#: holding `lakefile.lean`/`lakefile.toml`), for the `local` backend.
+#: holding `lakefile.lean`/`lakefile.toml`), for the `local` backend. Unset
+#: means the project `leap lean` creates, if it exists (`_local_project`).
 LEAN_PROJECT_DIR = os.environ.get("LEAN_PROJECT_DIR", "")
 
-#: "kimina", "local", or "" to infer from what is configured.
+#: "local" never calls a URL; "kimina" or "" tries a set URL first, then local
+#: Lean when the URL gives no verdict.
 VERIFIER_BACKEND = os.environ.get("LEAN_VERIFIER_BACKEND", "").strip().lower()
 
 #: The HTTP contract `run_lean_verifier` speaks, spelled out so an external
@@ -182,8 +189,8 @@ class LeanVerifierInput(pydantic.BaseModel):
   local: bool = pydantic.Field(
       default=False,
       description=(
-          "Use the local backend (LEAN_PROJECT_DIR), ignoring"
-          " LEAN_VERIFIER_BACKEND and any verifier URL."
+          "Use only local Lean (LEAN_PROJECT_DIR or ~/.leap/leap_lean); never"
+          " call a verifier URL."
       ),
   )
 
@@ -211,6 +218,37 @@ class LeanVerifierOutput(pydantic.BaseModel):
           " which means Lean actually rejected the code."
       ),
   )
+  backend: str = pydantic.Field(
+      default="",
+      description=(
+          "Which backend gave the result: \"kimina\" (the verifier URL) or"
+          " \"local\" (local Lean). Empty when none was reached."
+      ),
+  )
+  remote_error: Optional[str] = pydantic.Field(
+      default=None,
+      description=(
+          "Why the verifier URL gave no verdict, when one was set and the check"
+          " fell back to local Lean."
+      ),
+  )
+
+
+def _local_project() -> str:
+  """The Lake project local Lean compiles in, or "" when there is none.
+
+  `LEAN_PROJECT_DIR` when set; otherwise the project `leap lean` creates,
+  `$LEAP_HOME/leap_lean` (`~/.leap/leap_lean`), if that directory exists. The
+  path is spelled out here rather than read from `config`, so this module still
+  runs on its own.
+  """
+  project = os.environ.get("LEAN_PROJECT_DIR", LEAN_PROJECT_DIR)
+  if project:
+    return os.path.expanduser(project)
+  default = os.path.join(
+      os.path.expanduser(os.environ.get("LEAP_HOME", "~/.leap")), "leap_lean"
+  )
+  return default if os.path.isdir(default) else ""
 
 
 def _auth_headers() -> Dict[str, str]:
@@ -224,19 +262,20 @@ def _auth_headers() -> Dict[str, str]:
 
 
 def _resolve_backend(verifier_url: str) -> str:
-  """Picks the verifier backend from explicit config, then what is set."""
+  """The backend to try first: "kimina" when a URL is set, else "local".
+
+  Local Lean is the default. A set URL is tried first unless
+  `LEAN_VERIFIER_BACKEND=local`; "kimina" means the same as unset (a URL set
+  is tried first, and local Lean takes over when it gives no verdict).
+  """
   backend = os.environ.get("LEAN_VERIFIER_BACKEND", VERIFIER_BACKEND).strip().lower()
-  if backend in ("kimina", "local"):
-    return backend
-  if backend:
+  if backend not in ("", "kimina", "local"):
     raise ValueError(
         f"LEAN_VERIFIER_BACKEND={backend!r} is not one of 'kimina', 'local'."
     )
-  if verifier_url:
+  if backend != "local" and verifier_url:
     return "kimina"
-  if os.environ.get("LEAN_PROJECT_DIR", LEAN_PROJECT_DIR):
-    return "local"
-  return ""
+  return "local"
 
 
 def extract_info_messages(proof: str, messages: List[Dict[str, Any]]) -> str:
@@ -411,15 +450,19 @@ def _check_kimina(
 def _check_local(
     code: str, timeout: int
 ) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
-  """Compiles one snippet with `lake env lean --json` in `LEAN_PROJECT_DIR`.
+  """Compiles one snippet with `lake env lean --json` in the local project.
 
-  Produces the same `{"response": {"messages": [...]}}` / `{"error": ...}`
-  shape a kimina server returns, so everything downstream is shared. `lean
-  --json` prints one message object per line with `severity`, `pos` and `data`.
+  The project is `_local_project()`. Produces the same
+  `{"response": {"messages": [...]}}` / `{"error": ...}` shape a kimina server
+  returns, so everything downstream is shared. `lean --json` prints one message
+  object per line with `severity`, `pos` and `data`.
   """
-  project = os.environ.get("LEAN_PROJECT_DIR", LEAN_PROJECT_DIR)
+  project = _local_project()
   if not project or not os.path.isdir(project):
-    return None, f"LEAN_PROJECT_DIR={project!r} is not a directory"
+    return None, (
+        f"no local Lean project ({project or 'LEAN_PROJECT_DIR unset'} is not"
+        " a directory); run `leap lean`"
+    )
   lake = shutil.which("lake")
   if lake is None:
     return None, "`lake` is not on PATH; install Lean via elan"
@@ -474,19 +517,20 @@ def _check_local(
 
 
 def run_lean_verifier(input_data: LeanVerifierInput) -> LeanVerifierOutput:
-  """Verifies a Lean 4 proof with the configured backend (kimina or local).
+  """Verifies a Lean 4 proof: local Lean, or a set verifier URL while it works.
 
   Args:
     input_data: Code, optional target theorem, endpoint override and timeout.
 
   Returns:
     The verdict. `is_infra_failure=True` means no verdict was reached and says
-    nothing about the mathematics.
+    nothing about the mathematics. `backend` names who answered, and
+    `remote_error` says why a set URL was passed over for local Lean.
 
   Raises:
-    NotImplementedError: No verifier is configured (or `local` is set without
-      `LEAN_PROJECT_DIR`) -- reporting the absence as `is_valid=False` would
-      look like Lean rejecting every proof.
+    NotImplementedError: No URL is set and there is no local Lean project --
+      reporting the absence as `is_valid=False` would look like Lean rejecting
+      every proof.
   """
   code = input_data.code.strip()
   if not code:
@@ -506,40 +550,53 @@ def run_lean_verifier(input_data: LeanVerifierInput) -> LeanVerifierOutput:
   verifier_url = (input_data.verifier_url
                   or os.environ.get("LEAN_VERIFIER_URL", DEFAULT_VERIFIER_URL)
                   ).rstrip("/")
-  if input_data.local:
-    if not os.environ.get("LEAN_PROJECT_DIR", LEAN_PROJECT_DIR):
-      raise NotImplementedError(
-          "--local needs LEAN_PROJECT_DIR: a Lake project that depends on"
-          " Mathlib. Run `leap lean` once, or set it yourself."
-      )
-    backend = "local"
-  else:
-    backend = _resolve_backend(verifier_url)
+  backend = "local" if input_data.local else _resolve_backend(verifier_url)
+  res, last_err, remote_err = None, None, None
+  if backend == "kimina":
+    # A set URL is used only while it works: no verdict from it (unreachable,
+    # an HTTP error, an empty reply) sends the same check to local Lean.
+    res, remote_err = _check_kimina(code, input_data.timeout, verifier_url)
+    if res is None:
+      backend = "local"
   if backend == "local":
-    res, last_err = _check_local(code, input_data.timeout)
-  elif backend == "kimina":
-    if not verifier_url:
-      raise NotImplementedError(
-          "LEAN_VERIFIER_BACKEND=kimina but no LEAN_VERIFIER_URL is set."
+    if not _local_project():
+      if remote_err is None:
+        raise NotImplementedError(
+            "No Lean verifier is configured. Local Lean is the default: run"
+            " `leap lean` once (it creates ~/.leap/leap_lean), or set"
+            " LEAN_PROJECT_DIR to a Lake project that depends on Mathlib. To use"
+            " a kimina-lean-server instead, set LEAN_VERIFIER_URL to its base"
+            " URL (plus LEAN_VERIFIER_API_KEY if it has one); it is used while"
+            " it answers.\n\n"
+            "Any other service must speak this contract:\n\n"
+            + VERIFIER_WIRE_CONTRACT
+        )
+      return LeanVerifierOutput(
+          is_valid=False,
+          is_infra_failure=True,
+          error_message=(
+              f"Lean verifier at {verifier_url} failed: {remote_err}; no local"
+              " Lean project to fall back to (run `leap lean`, or set"
+              " LEAN_PROJECT_DIR)."
+          ),
+          remote_error=remote_err,
       )
-    res, last_err = _check_kimina(code, input_data.timeout, verifier_url)
-  else:
-    raise NotImplementedError(
-        "No Lean verifier is configured. Either:\n"
-        "  * install Lean + Mathlib locally and set LEAN_PROJECT_DIR to a Lake"
-        " project that depends on Mathlib (backend 'local'), or\n"
-        "  * run a kimina-lean-server and set LEAN_VERIFIER_URL to its base URL"
-        " (backend 'kimina'), plus LEAN_VERIFIER_API_KEY if it has one.\n\n"
-        "Any other service must speak this contract:\n\n"
-        + VERIFIER_WIRE_CONTRACT
-    )
+    res, last_err = _check_local(code, input_data.timeout)
 
   if res is None:
     # No verdict was obtained, so this says nothing about the proof.
+    error_message = f"Lean verifier ({backend}) failed: {last_err}"
+    if remote_err is not None:
+      error_message = (
+          f"Lean verifier at {verifier_url} failed: {remote_err}; local Lean"
+          f" failed too: {last_err}"
+      )
     return LeanVerifierOutput(
         is_valid=False,
         is_infra_failure=True,
-        error_message=f"Lean verifier ({backend}) failed: {last_err}",
+        error_message=error_message,
+        backend=backend,
+        remote_error=remote_err,
     )
 
   if res.get("error"):
@@ -552,6 +609,8 @@ def run_lean_verifier(input_data: LeanVerifierInput) -> LeanVerifierOutput:
             re.search(r"time(?:d)?\s*-?\s*out|timeout", err_text, re.IGNORECASE)
         ),
         error_message=f"Lean Verifier Error: {err_text}",
+        backend=backend,
+        remote_error=remote_err,
     )
 
   resp_obj = res.get("response", {})
@@ -592,6 +651,12 @@ def run_lean_verifier(input_data: LeanVerifierInput) -> LeanVerifierOutput:
   else:
     warning_notice = "[TOOL WARNING] Verification ran without --target_name argument. The tool only verified if the code compiles natively, it did NOT cryptographically check for sorryAx or other cheat axioms. To verify axiom safety, provide --target_name."
     info_string = warning_notice + ("\n" + info_string if info_string else "")
+  if remote_err is not None:
+    fallback_note = (
+        f"[VERIFIER NOTE] The verifier at {verifier_url} gave no verdict"
+        f" ({remote_err}); this result is from local Lean."
+    )
+    info_string = fallback_note + ("\n" + info_string if info_string else "")
 
   if has_compiler_error:
     error_msg = extract_error_messages(code, messages)
@@ -600,6 +665,8 @@ def run_lean_verifier(input_data: LeanVerifierInput) -> LeanVerifierOutput:
         error_message=error_msg,
         used_axioms=used_axioms,
         info_messages=info_string,
+        backend=backend,
+        remote_error=remote_err,
     )
 
   return LeanVerifierOutput(
@@ -607,6 +674,8 @@ def run_lean_verifier(input_data: LeanVerifierInput) -> LeanVerifierOutput:
       error_message=None,
       used_axioms=used_axioms,
       info_messages=info_string,
+      backend=backend,
+      remote_error=remote_err,
   )
 
 
@@ -651,7 +720,7 @@ def verify_proof(
     target_name: Target theorem name to ensure proof correctness for the goal.
     return_error_message: If True, returns a tuple (is_valid, error_message).
     verifier_url: Optional custom Lean verifier service base URL.
-    local: Use the local backend regardless of LEAN_VERIFIER_BACKEND or URL.
+    local: Use only local Lean; never call a verifier URL.
 
   Returns:
     - If return_error_message=True: Tuple[bool, Optional[str]]
@@ -755,7 +824,7 @@ def main(argv: List[str]) -> None:
         "--local",
         action=argparse.BooleanOptionalAction,
         default=False,
-        help="Use the local backend, ignoring LEAN_VERIFIER_BACKEND and URLs",
+        help="Use only local Lean; never call a verifier URL",
     )
     parser.add_argument(
         "--json_output",

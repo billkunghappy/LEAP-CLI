@@ -7,7 +7,7 @@ A pip package with only the three CLI tools the LEAP agents call, plus the
 | Command | Module |
 | :-- | :-- |
 | `state_manager_bin` | `leap/state_manager.py` (proof graph + phase machine) |
-| `lean_verifier_tool_bin` | `leap/lean_verifier_tool.py` (kimina or local Lean) |
+| `lean_verifier_tool_bin` | `leap/lean_verifier_tool.py` (local Lean; a set kimina URL while it answers) |
 | `lean_search_tool_bin` | `leap/lean_search_tool.py` (leansearch.net / Loogle) |
 
 ```bash
@@ -48,11 +48,13 @@ not contain the files:
 uv build --wheel packaging/leap-tools   # or: python -m build --wheel packaging/leap-tools
 ```
 
-To use a server or an existing project instead, run
-`leap lean --kimina URL [--api-key K]` or `leap lean --project DIR`. Or skip
-`leap lean` and set environment variables (or `~/.leap/config.json`):
-`LEAN_VERIFIER_BACKEND=local` + `LEAN_PROJECT_DIR`, or `LEAN_VERIFIER_URL`
-(+ `LEAN_VERIFIER_API_KEY`) for a kimina-lean-server.
+The verifier uses local Lean by default: `LEAN_PROJECT_DIR`, else the
+`~/.leap/leap_lean` project `leap lean` creates. To use an existing project,
+run `leap lean --project DIR` (or set `LEAN_PROJECT_DIR`). A verifier URL is
+the only exception: with `leap lean --kimina URL [--api-key K]` (or
+`LEAN_VERIFIER_URL`, + `LEAN_VERIFIER_API_KEY`) set, the URL is tried first,
+and whenever it gives no verdict the check runs on local Lean.
+`LEAN_VERIFIER_BACKEND=local` never calls a URL.
 
 Do not install it next to `leap-cli`; both provide the `leap` package and the
 same commands.
